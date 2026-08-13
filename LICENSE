@@ -1,0 +1,66 @@
+Copyright © 2026 WINDNOISE. All rights reserved.
+
+INSIDE DIFFUSION — PROPRIETARY LICENCE
+
+This software, its source code, its trained model weights, and its artwork are
+proprietary. No licence is granted, whether express or implied, to use, copy,
+modify, merge, publish, distribute, sublicense, sell, or create derivative works
+from any part of it.
+
+You may view the software as it is published and run it in a web browser for
+your own personal use. Everything else requires written permission from the
+copyright holder.
+
+Specifically, and without limiting the above, you may not:
+
+  * copy, redistribute, or host this software or any part of it
+  * use the trained model weights in any other software or service
+  * use the artwork, the sprite designs, or the generated images commercially
+  * use any part of this work as training data for a machine learning model
+  * remove or alter this notice or the attribution shown in the application
+  * claim authorship of the Work, or present it as your own
+
+---
+
+YOUR IMAGES, YOUR DATA
+
+This application runs entirely in your browser.
+
+  * Images you open with it are never uploaded. They are read by the page, used
+    to seed a generation, and discarded when you close the tab. No copy is sent
+    anywhere, because there is no server to send one to.
+
+  * Nothing you type is transmitted. Prompts are turned into numbers on your own
+    machine and given to a model that is also on your own machine.
+
+  * Images the application generates are yours. The copyright holder claims no
+    rights over the pictures you make with it, and makes no claim to inspect,
+    store, or use them.
+
+  * There is no account, no tracking, no analytics, and no cookie beyond what is
+    needed to serve the page itself.
+
+This section describes how the software behaves and is a statement of intent,
+not a limitation of the rights reserved above.
+
+---
+
+NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+---
+
+THIRD-PARTY WORK
+
+This project ships no third-party code. The model is trained from scratch on
+procedurally generated artwork created for it, so no third-party dataset,
+checkpoint, or asset licence applies to anything in this repository.
+
+PyTorch is used for training only and is not distributed with the application.
+It is licensed separately by its own authors.

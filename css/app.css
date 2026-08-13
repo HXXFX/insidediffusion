@@ -1,0 +1,1458 @@
+/*
+ * Inside Diffusion.
+ *
+ * CONTRAST IS MEASURED, NOT EYEBALLED. Against --bg #f4efe9:
+ *   --ink    #241d1a  14.6:1   body text
+ *   --ink-2  #5b4d45   7.4:1   secondary text
+ *   --ink-3  #6f6058   5.1:1   hints and captions   (>= 4.5:1 floor)
+ *   --accent #ad4d2a   4.7:1   links and the active marker
+ *   --hot    #8a2431   7.6:1   on --hot-bg
+ * Non-text UI (tracks, borders) clears 3:1. RECOMPUTE rather than trusting your
+ * eye: warm mid-tones read as darker than they measure, and both --ink-3 and
+ * --accent first shipped below the floor (3.7:1 and 3.65:1) while looking fine.
+ *
+ * WHERE TO CHANGE THINGS
+ *   the look ............ this file
+ *   the controls ........ js/config.js
+ *   what a view draws ... js/views/<name>.js
+ */
+
+:root {
+  /* WARM LIGHT. The previous palette was cold blue-grey on near-black, which
+     fought the subject: this app makes cute pixel monsters, and it looked like
+     a debugger. The reference is Nike x SKIMS — tonal warm neutrals, one earthy
+     accent, no blue anywhere.
+     Light rather than dark for one concrete reason beyond taste: every sprite
+     the model draws has a near-white background of its own, and on a near-black
+     page each one read as a cut-out card floating on the interface. On bone
+     they sit down into it. */
+  --bg:        #f4efe9;   /* bone */
+  --panel:     #fffdfa;
+  --panel-2:   #efe7dd;   /* inset / pressed */
+  --line:      #ded2c5;
+  --line-soft: #ebe2d7;
+  --raise:     #c3b1a0;   /* hover border */
+  --ink:       #241d1a;   /* warm near-black */
+  --ink-2:     #5b4d45;
+  --ink-3:     #6f6058;   /* 5.1:1 on bone — the floor for body text */
+  --accent:    #ad4d2a;   /* clay. 4.74:1 on bone — #c2603a measured 3.65 */
+  --accent-2:  #c07a1f;   /* amber, for the "now" marker */
+  --hot:       #8a2431;   /* 4.9:1 on --hot-bg; #a8323f measured 3.4:1 */
+  --hot-bg:    #fbeaec;
+  --sel-bg:    #f7e3d8;   /* a chosen word / primary button */
+  --sel-line:  #d79a76;
+  --sel-ink:   #8f3d1c;
+  --view-bg:   #ebe2d6;   /* ground for the 3-D scenes */
+  --track:     #ded2c5;
+  --shadow:    rgba(74, 48, 30, .16);
+  --canvas-bg: #ded2c5;   /* warm mid: the sprites' own white ground shows its edge */
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --bar-h: 46px;
+
+  /* THE TYPE SCALE — six sizes and two weights, for the whole app.
+     It started life inside the Making of tab and is here because the rest of
+     the app had the same problem worse: twelve distinct sizes across 52
+     declarations, most of them half a pixel apart, and `font-weight` appearing
+     eleven times in the entire stylesheet. Nothing was louder than anything
+     else, so every panel read as one flat block of small text.
+
+     Weight is free in this family: it is monospace, so a heavier cut has the
+     same advance width and nothing reflows. Measured ink mass at 13px —
+     400 -> 84, 600 -> 98, 700 -> 109. Only those three render; 500 resolves to
+     the same cut as 600.
+
+     Use a variable, not a number. A new size means answering which of these
+     six it is, and the answer is nearly always one of them. */
+  --fs-input: 15.5px;   /* the prompt sentence: the one thing you edit */
+  --fs-lead:  13.5px;   /* reading paragraphs, and the sentence's dropdowns */
+  --fs-body:  12.5px;   /* help prose, panel copy */
+  --fs-small:   11px;   /* captions, secondary text, buttons */
+  --fs-label:   10px;   /* uppercase labels — always --w-strong */
+  --fs-micro:    9px;   /* sub-labels inside a control */
+  --w-strong: 600;
+  --w-loud:   700;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.5 var(--mono);
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* `hidden` must actually hide.
+ *
+ * The browser's own rule is `[hidden] { display: none }`, which ANY class
+ * setting a display loses to — `.viewgrid { display: grid }` is more specific
+ * and wins, so the element stays on screen with its `hidden` attribute set.
+ * This was being patched one selector at a time (.pane, .panel, .overlay,
+ * .field...), and the training mode found the four that had been missed: the
+ * view grid, the view switch and the timeline all carried on rendering
+ * underneath it. One rule, once. */
+[hidden] { display: none !important; }
+
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- header */
+.bar {
+  height: var(--bar-h);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+  /* The positioning context for `.tabs`, which is absolutely centred. Without
+     it the tabs resolve against the viewport and disappear behind the page. */
+  position: relative;
+  z-index: 2;
+}
+.brand {
+  display: flex; align-items: center; gap: 9px;
+  color: var(--ink); text-decoration: none;
+}
+.brand:hover .wm-a, .brand:hover .m-fill { fill: var(--accent); }
+/* Both are inline SVG generated by tools/make_brand.py: the mark is an actual
+   monster the composer built, the wordmark is a 5x7 bitmap face. Being inline
+   is what lets them take their colours from here — an <img> cannot. */
+.mark { width: 24px; height: 24px; flex: none; display: block; }
+.mark svg { width: 100%; height: 100%; display: block; }
+.m-fill { fill: var(--accent); }
+.m-line { fill: var(--ink); }
+.m-eye  { fill: var(--panel); }
+
+.wordmark { display: block; height: 13px; flex: none; }
+.wordmark svg { height: 100%; width: auto; display: block; }
+/* Bold the word that DISTINGUISHES, dim the word everyone knows. In a bitmap
+   face there is no bold — the weight difference has to be carried by colour. */
+.wm-a { fill: var(--ink); }
+.wm-b { fill: var(--ink-3); }
+
+/* CENTRED, and the active tab JOINS the content below it.
+   The browser-tab idiom: the selected tab shares the background of the area it
+   belongs to and has no bottom edge, so the two read as one surface rather
+   than as a button sitting above a panel. `margin-bottom: -1px` is what pulls
+   it over the header's own border; without it a hairline still cuts across. */
+.tabs {
+  display: flex; gap: 2px; align-items: flex-end; height: 100%;
+  position: absolute; left: 50%; transform: translateX(-50%);
+}
+.tab {
+  font-size: var(--fs-label); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3); background: none; cursor: pointer; font-weight: var(--w-strong);
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: 7px 7px 0 0; padding: 7px 16px 8px;
+  margin-bottom: -1px; position: relative;
+}
+.tab[aria-selected="true"] {
+  color: var(--ink); background: var(--view-bg); border-color: var(--line);
+  font-weight: var(--w-loud);
+}
+.tab:hover:not([aria-selected="true"]) { color: var(--ink-2); background: var(--line-soft); }
+.tab.soon { color: var(--ink-3); opacity: .45; cursor: not-allowed; }
+/* A tab that is declared but not built. It has to LOOK unavailable — the
+   previous version was styled identically to a working tab and did nothing
+   when clicked, which reads as a broken app rather than an unfinished one. */
+.tab.soon { color: var(--ink-3); opacity: .45; cursor: not-allowed; }
+.tab.soon:hover { color: var(--ink-3); }
+.tab.soon em {
+  font-style: normal; font-size: var(--fs-micro); letter-spacing: .1em;
+  margin-left: 6px; padding: 1px 4px; border-radius: 3px;
+  border: 1px solid currentColor;
+}
+.spacer { flex: 1; }
+/* READOUTS, NOT CONTROLS. A rounded box with a border is the shape of a button
+   in this app — the Log button and the privacy pill beside it are exactly that
+   — so which model is loaded and how far the run has got both invited a click
+   that does nothing. They keep their type and their place and lose the frame:
+   nothing here is pressable, so nothing here is drawn as pressable. */
+.pill {
+  font-size: var(--fs-label); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3); white-space: nowrap; padding: 4px 2px;
+}
+
+/* The maker's mark: ONE grey, no underline, no weight change, and the
+   provenance line UNBROKEN.
+   Underlines were tried and removed. They cut a single stamp into three pieces
+   and turn it into a sentence with hyperlinks in it — the plate should read as
+   one marking, the way print on the back of a device does. Hover and the
+   pointer cursor are enough to find the links.
+   Tracking is tighter than the headings it borrows from because these are the
+   longest strings in the panel: at .16em the provenance line wrapped. */
+.plate {
+  border-top: 1px solid var(--line-soft); margin-top: 4px; padding-top: 10px;
+  display: flex; flex-direction: column; gap: 3px; text-align: center;
+  font-size: var(--fs-micro); letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+.plate > span { white-space: nowrap; }
+.plate a { color: inherit; text-decoration: none; }
+.plate a:hover, .plate a:focus-visible { color: var(--accent); }
+
+/* ---------------------------------------------------------------- stage */
+.stage { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+/* ---- the word list ------------------------------------------------------
+   Promoted from a footnote in an About box to a panel beside the input,
+   because a hidden vocabulary made a working app look broken. */
+.wl-intro { margin: 0 0 10px; font-size: var(--fs-small); color: var(--ink-3); line-height: 1.55; }
+.wl-intro b { color: var(--ink-2); font-weight: var(--w-strong); }
+.wl-head {
+  display: flex; align-items: baseline; gap: 6px; margin: 10px 0 6px;
+  font-size: var(--fs-label); letter-spacing: .15em; text-transform: uppercase;
+  color: var(--ink-2); font-weight: var(--w-strong);
+}
+.wl-head em { font-style: normal; color: var(--ink-3); }
+.wl-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.wl-word {
+  font-size: var(--fs-small); color: var(--ink-2); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 99px;
+  padding: 3px 9px; cursor: pointer;
+}
+.wl-word:hover { border-color: var(--raise); color: var(--ink); }
+.wl-word[aria-pressed="true"] {
+  background: var(--sel-bg); border-color: var(--sel-line); color: var(--sel-ink);
+}
+
+/* ---- notes -------------------------------------------------------------- */
+.note { font-size: var(--fs-small); color: var(--accent-2); margin: 0 0 16px; line-height: 1.55; }
+.note b { color: var(--ink); font-weight: var(--w-loud); }
+/* When NOTHING was understood the output really is the same every time, so
+   that case gets a box rather than a line of small text. */
+.note.bad {
+  color: var(--hot); background: var(--hot-bg);
+  border: 1px solid rgba(168,50,63,.32); border-left-width: 2px;
+  border-radius: 0 6px 6px 0; padding: 10px 12px;
+}
+.note.bad b { color: var(--hot); }
+
+/* ---- settings groups ---------------------------------------------------- */
+.grp { margin-bottom: 16px; }
+.grp.bare { margin-bottom: 0; }
+.grp h3 {
+  margin: 0 0 8px; font-size: var(--fs-label); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--ink-2); font-weight: var(--w-strong);
+}
+.grp-sum {
+  font-size: var(--fs-label); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-2); cursor: pointer; padding: 4px 0; font-weight: var(--w-strong);
+}
+.grp-sum:hover { color: var(--ink-2); }
+.chkrow { margin-bottom: 2px; }
+.field { margin-bottom: 14px; }
+.field > label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-2); margin-bottom: 6px; font-weight: var(--w-strong);
+}
+.field input[type=range] { width: 100%; accent-color: var(--accent); display: block; }
+.field select, .field input[type=number] {
+  width: 100%; font: inherit; font-size: var(--fs-body); padding: 6px 8px; border-radius: 5px;
+  color: var(--sel-ink); background: var(--sel-bg); border: 1px solid var(--sel-line);
+}
+.val { margin-left: auto; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* ---- the run readout ---------------------------------------------------- */
+.runstat {
+  display: flex; flex-direction: column; gap: 1px; text-align: right;
+  font-size: var(--fs-label); color: var(--ink-3); font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- the dock -----------------------------------------------------------
+   One line across the bottom: your picture, your sentence, Run. Everything
+   that is not the sentence collapses into the cog, because the sentence is
+   what people came to change and the rest is what they change once.
+
+   ONE CONTROL HEIGHT, declared once. Everything on the bottom row — the image
+   slot, the dropdowns inside the sentence, More settings, Restart, Run — is
+   built to --ctl, which is what makes the row a row. Before this each control
+   sized itself from its own content: 52, 34, 30 and 36 pixels tall, centred
+   individually, so nothing shared an edge with anything beside it. */
+.dock {
+  --ctl: 34px;
+  flex: none; display: flex; align-items: flex-start; gap: 18px;
+  padding: 11px 16px 13px; background: var(--panel);
+  border-top: 1px solid var(--line); min-height: 62px;
+}
+.dock-prompt { flex: 1; min-width: 0; }
+/* The actions sit beside the CONTROLS, not beside label-plus-control, so they
+   are pushed down by the height of one label band. */
+.dock-actions { display: flex; align-items: center; gap: 8px; flex: none; margin-top: 17px; }
+
+/* Every dock control says what it is. A dashed square beside a row of
+   dropdowns does not announce itself as "the starting picture".
+   The label band is a FIXED height so the two labels sit on one line and the
+   controls under them start at the same y — with `align-items: center` on the
+   dock they floated to wherever their own control's height put them. */
+.dock-field { display: flex; flex-direction: column; gap: 5px; }
+.dock-label {
+  height: 12px; line-height: 12px;
+  font-size: var(--fs-label); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--ink-2); white-space: nowrap; font-weight: var(--w-strong);
+}
+.dock-label em {
+  font-style: normal; opacity: .7; letter-spacing: .08em; margin-left: 4px;
+}
+/* The dock's buttons take the row's height rather than each choosing one.
+   Run is the primary action, so it is wider — but a FIXED width, because its
+   label cycles "Run" / "Pause" / "Run again" and a button that changes size
+   under the pointer moves the thing you are about to click. */
+.dock .btn { height: var(--ctl); }
+
+/* A TOGGLE, so it has to read as on or off at a glance rather than as another
+   action button. Pressed borrows the selected-word colours the sentence uses,
+   which is the app's existing "this is chosen" signal. */
+#live[aria-pressed="true"] {
+  background: var(--sel-bg); border-color: var(--sel-line); color: var(--sel-ink);
+}
+#live[aria-pressed="true"] .ldot { background: var(--accent); border-color: var(--accent); }
+#live[aria-pressed="false"] { color: var(--ink-3); }
+.ldot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  border: 1px solid var(--raise); background: none;
+}
+
+/* Run, when the controls have moved since what is on screen. It is the only
+   way to see the change, so it stops being a quiet secondary button. */
+#play.stale {
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--sel-bg);
+}
+.dock .btn.big { --btn-pad: 18px; height: var(--ctl); min-width: 108px; font-size: var(--fs-small); }
+
+/* FIXED WIDTH on the field, not the button: the clear button only exists once
+   there is an image, and letting the field grow to fit it shunted the whole
+   sentence 25px to the right the moment you dropped a picture in. */
+.dock-img {
+  position: relative; flex: none; width: 152px;
+  display: flex; align-items: center; gap: 5px;
+}
+.dock-imgbtn {
+  height: var(--ctl); flex: 1; min-width: 0; border-radius: 7px; cursor: pointer;
+  border: 1px dashed var(--line); background: var(--panel-2);
+  color: var(--ink-3); font-size: var(--fs-small); letter-spacing: .03em;
+  display: flex; align-items: center; gap: 7px; padding: 0 11px;
+}
+/* Filenames are arbitrary; the full one is on the slot's title. */
+#dropHint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-imgbtn:hover, .dock-img.over .dock-imgbtn {
+  border-color: var(--accent); color: var(--accent);
+}
+.dock-img.has .dock-imgbtn {
+  border-style: solid; color: var(--ink-2); padding-left: 4px;
+}
+#preview {
+  width: 24px; height: 24px; flex: none;
+  image-rendering: pixelated; border-radius: 4px;
+  border: 1px solid var(--line); background: var(--canvas-bg);
+  pointer-events: none;
+}
+#preview[hidden] { display: none; }
+/* Beside the control rather than pinned to its corner: a floating × over a
+   34px-tall pill overlaps the border on both edges. */
+.dock-clear {
+  width: 20px; height: 20px; flex: none;
+  border-radius: 50%; border: 1px solid var(--line); background: var(--panel);
+  color: var(--ink-3); font-size: 12px; line-height: 1; cursor: pointer;
+  padding: 0; display: grid; place-items: center;
+}
+.dock-clear[hidden] { display: none; }
+.dock-clear:hover { color: var(--hot); border-color: var(--hot); }
+
+/* ---- the status bar ----------------------------------------------------- */
+.statusbar {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  height: 30px; padding: 0 10px;
+  background: var(--panel-2); border-top: 1px solid var(--line);
+}
+.statusbtn {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--fs-label); letter-spacing: .1em; text-transform: uppercase;
+  font-weight: var(--w-strong);
+  color: var(--ink-3); background: none; border: 1px solid transparent;
+  border-radius: 5px; padding: 3px 8px; cursor: pointer;
+}
+.statusbtn:hover, .statusbtn[aria-expanded="true"] {
+  color: var(--ink); background: var(--panel); border-color: var(--line);
+}
+/* A button has to look like one at rest, not only under the pointer. Borrowing
+   the border on hover meant the only state where it read as pressable was the
+   state you had already found it in. */
+.statusbtn.framed {
+  border-color: var(--line); background: var(--panel);
+  color: var(--ink-2); border-radius: 6px; padding: 3px 10px;
+}
+.statusbtn.framed:hover, .statusbtn.framed[aria-expanded="true"] {
+  border-color: var(--raise); color: var(--ink);
+}
+.statusbtn em {
+  font-style: normal; font-variant-numeric: tabular-nums; opacity: .75;
+}
+
+/* ---- the privacy pill ---------------------------------------------------
+   The one claim in the app that a visitor has to take on trust, so it is built
+   to be noticed rather than to be brief: a bordered pill with a live indicator,
+   and the detail in a panel that sits on the page's own paper. It was tried
+   dark, on the reasoning that an inverted panel reads as the system speaking;
+   against a warm bone palette it read as a hole in the app. */
+.privpill {
+  display: flex; align-items: center; gap: 7px;
+  font-size: var(--fs-label); letter-spacing: .1em; text-transform: uppercase;
+  font-weight: var(--w-strong);
+  color: var(--ink-2); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 99px;
+  padding: 3px 11px 3px 9px; cursor: default;
+}
+.privpill:hover { border-color: var(--raise); color: var(--ink); }
+.pdot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: #4f7a4a;
+  box-shadow: 0 0 0 3px rgba(79,122,74,.16);
+}
+/* Qualified as `.poppanel.privpanel` rather than a bare class: both are single
+   selectors, so an unqualified variant is settled by which one happens to come
+   later in the file, and an earlier dark version lost its background that way
+   and rendered near-white text on near-white. */
+.poppanel.privpanel { width: 320px; padding: 15px 17px; }
+.privpanel b {
+  display: block; color: var(--ink); font-weight: var(--w-strong);
+  font-size: var(--fs-body);
+}
+.privpanel p { margin: 8px 0 0; font-size: var(--fs-small); line-height: 1.6; color: var(--ink-2); }
+.privpanel .plate { margin-top: 14px; padding-top: 11px; }
+
+/* ---- the log ------------------------------------------------------------ */
+.logpanel { width: min(680px, calc(100vw - 24px)); }
+/* What the app is, at the top of the panel people actually open. */
+.logintro { padding: 13px 14px 12px; border-bottom: 1px solid var(--line-soft); }
+.logintro b {
+  display: block; font-weight: var(--w-strong); color: var(--ink);
+  font-size: var(--fs-label); letter-spacing: .16em; text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.logintro span { display: block; font-size: var(--fs-small); line-height: 1.6; color: var(--ink-3); }
+.logintro em { font-style: normal; color: var(--ink-2); }
+.loghead {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-2); font-weight: var(--w-strong);
+}
+.ghost {
+  font: inherit; font-size: var(--fs-label); letter-spacing: .1em; text-transform: uppercase;
+  background: none; border: 1px solid var(--line); color: var(--ink-3);
+  border-radius: 4px; padding: 3px 8px; cursor: pointer;
+}
+.ghost:hover { color: var(--ink); border-color: var(--raise); }
+.loglist {
+  list-style: none; margin: 0; padding: 6px 0;
+  max-height: 46vh; overflow-y: auto;
+}
+.logrow {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 3px 12px; font-size: var(--fs-small); line-height: 1.5;
+}
+.logrow .t {
+  flex: none; width: 52px; text-align: right; color: var(--ink-3);
+  font-variant-numeric: tabular-nums; opacity: .7;
+}
+.logm { flex: 1; min-width: 0; color: var(--ink-2); }
+.logrow .d { flex: none; color: var(--ink-3); opacity: .75; }
+.lv-good .logm { color: var(--accent); }
+.lv-warn .logm { color: var(--accent-2); }
+.lv-error .logm { color: var(--hot); }
+.lv-debug .logm { color: var(--ink-3); }
+
+/* ---- the sentence -------------------------------------------------------
+   ONE LINE. That is the whole reason the dock exists. In the old 268px sidebar
+   this wrapped over five lines and stopped reading as a sentence at all — it
+   was a stack of dropdowns with commas in it. Across the full width there is
+   room for the sentence to be a sentence, so it is pinned to a single row and
+   allowed to scroll sideways on a narrow window rather than wrap. */
+.sentence {
+  display: flex; align-items: center; flex-wrap: nowrap;
+  font-size: var(--fs-input); line-height: 1.2; color: var(--ink);
+  min-height: var(--ctl);
+  overflow-x: auto; overflow-y: hidden; padding: 0;
+  scrollbar-width: thin;
+}
+.sentence .lit { color: var(--ink-3); white-space: pre; }
+.sentence .chunk { white-space: nowrap; display: inline-flex; align-items: center; }
+/* The dock supplies the context, so the field's own label is for screen
+   readers only — a "Prompt" caption above a sentence that plainly is one is
+   just a line of chrome between the user and the thing they came to edit. */
+.dock-prompt .field { margin: 0; }
+.dock-prompt .field > label { position: absolute; width: 1px; height: 1px;
+  overflow: hidden; clip: rect(0 0 0 0); }
+.dock-prompt .note { margin: 2px 0 0; padding: 4px 8px; font-size: var(--fs-small); }
+.field .sentence select.slot, .sentence select.slot {
+  /* inline-BLOCK, not inline. A <select> is a replaced element: as `inline` its
+     height does not size the line box, so the sentence measured two lines tall
+     while occupying four and the last three dropdowns rendered underneath the
+     section below. */
+  width: auto; display: inline-block; vertical-align: middle; margin: 0 2px;
+  font-size: var(--fs-lead); padding: 5px 8px; border-radius: 6px;
+  font-weight: var(--w-strong);
+  color: var(--sel-ink); background: var(--sel-bg); border: 1px solid var(--sel-line);
+  cursor: pointer;
+}
+.sentence select.slot:hover { border-color: var(--accent); }
+/* A `none` choice is a real answer — "no wings" — so it stays visible and
+   selectable, just quieter than a part the creature actually has. */
+.sentence select.slot.dim {
+  background: var(--panel-2); border-color: var(--line); color: var(--ink-3);
+}
+
+
+/* ---- control tips -------------------------------------------------------
+   A "?" beside a control's label. THE TIP LIVES INSIDE THE BUTTON, which has
+   two consequences worth knowing: a <button> centres its content by UA default
+   (hence the explicit text-align), and the tip has to be positioned against the
+   FIELD rather than the 15px dot, or it measures 28px wide and wraps every line
+   to one character.
+
+   These rules, and .logt/.logd/.warn/.wl-none below, were casualties of a
+   range-based edit that deleted five unrelated sections of this file. The first
+   recovery pass rebuilt everything it could find by scanning `class="..."` in
+   the markup — which is exactly the set that misses anything built in script.
+   Audit both: grep the JS for className and classList too. */
+.help {
+  position: static; width: 15px; height: 15px; flex: none;
+  border-radius: 50%; border: 1px solid var(--line);
+  background: none; color: var(--ink-3); font-size: var(--fs-micro);
+  cursor: help; padding: 0;
+}
+.help:hover, .help:focus-visible { color: var(--ink); border-color: var(--raise); }
+/* The dot stays lit while its tip is open, so it is obvious which one you are
+   reading. */
+.help.on { color: var(--ink); border-color: var(--accent); }
+
+/* THE TIP MUST FIT INSIDE THE PANEL, and this is not a style preference. These
+   live in the settings popover, which is `overflow-y: auto` so it can scroll —
+   and an overflow on EITHER axis clips BOTH. The tip was 268px wide at
+   left:22px inside a 320px panel, i.e. 58px past its right edge, so it rendered
+   and was then cut away entirely. The "?" looked broken: hovering did nothing
+   at all, with no error and the element present in the DOM. Pinning it to the
+   panel's own content width removes the overhang. Do not widen it or move it
+   right without re-checking against the panel. */
+.tip {
+  display: block; position: absolute; left: 0; right: 0; top: 20px; z-index: 50;
+  text-align: left;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 13px 13px; font-size: var(--fs-small); line-height: 1.6;
+  color: var(--ink-2);
+  /* RESET the inherited weight. The tip lives inside the field's <label>, which
+     is now --w-strong so the control names read as labels — and without this
+     the whole explanation inherits it and comes out bold. Same reason
+     text-transform and letter-spacing are reset here. */
+  font-weight: 400;
+  text-transform: none; letter-spacing: 0;
+  box-shadow: 0 18px 44px -18px var(--shadow);
+}
+.tip[hidden] { display: none; }
+/* Three labelled answers, not three paragraphs: what it does, then what it
+   costs, then when to reach for it. The labels are the point — they let you
+   find the one line you came for without reading the other two. */
+.tip b {
+  display: block; font-weight: var(--w-strong); color: var(--ink);
+  margin-bottom: 9px;
+}
+.tip i {
+  display: block; font-style: normal; margin-top: 9px;
+  font-size: var(--fs-micro); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--accent-2); font-weight: var(--w-strong);
+}
+.tip i + span { display: block; color: var(--ink-3); }
+/* The anchor is the FIELD, not the 15px button, so `left:0; right:0` spans the
+   control's full width rather than the dot's. */
+.field label { position: relative; }
+
+/* A slider past the value where its control stops behaving. The number itself
+   carries the warning colour; the label does not, or the row reads as an
+   error rather than as a caution. */
+.field.warn .val { color: var(--accent-2); }
+.field.warn input[type=range] { accent-color: var(--accent-2); }
+
+/* ---- log rows -----------------------------------------------------------
+   The class names are logt / logm / logd, set in js/ui/logview.js. */
+.logt {
+  flex: none; width: 52px; text-align: right; color: var(--ink-3);
+  font-variant-numeric: tabular-nums; opacity: .7;
+}
+.logd { flex: none; color: var(--ink-3); opacity: .75; }
+
+/* `none` is a real answer — "no wings" is a choice, not a gap — so it stays
+   selectable and simply reads quieter than a part the creature has. */
+.wl-none { opacity: .72; font-style: italic; }
+
+/* ---- the training mode --------------------------------------------------
+   Three acts down one grid. Fills the viewport in place of the view grid.
+
+   THE GRID IS THE POINT OF THIS SECTION. Everything used to be sized ad hoc —
+   a 210px rail in act 1 beside a 208px rail in act 2, content columns starting
+   at 262 and at 260 — differences too small to see one at a time and, together,
+   enough that nothing on the page lined up with anything above it. One rail
+   width and one gutter, declared once, used by every act. */
+.train2d {
+  --rail: 236px;        /* the left column, both acts */
+  --gut: 22px;          /* between panels */
+  --pad: 26px;          /* page margin */
+
+  /* FIVE SIZES AND THREE WEIGHTS, declared once. The tab had accumulated ten
+     sizes between 8.5 and 13px, most of them half a pixel apart and none of
+     them meaning anything, which is why it read as flat however the wording was
+     cut. Weight was doing no work at all: everything was 400, including the
+     headings, so nothing announced itself and the eye had no order to follow.
+     The family is monospace, where a bolder cut does not change advance width,
+     so weight costs no layout. Measured ink mass at 13px: 400 -> 84, 600 -> 98,
+     700 -> 109. Those are the three steps that actually render here; 500 and
+     600 resolve to the same cut, so 600 is the middle one. */
+  /* The scale itself now lives on :root — see the note there. */
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  gap: 0; padding: 0; overflow-y: auto;
+}
+
+/* ---- the three acts ------------------------------------------------------
+   Numbered sections, separated by a rule and scrolled through in order. The
+   numbering is not decoration: the page makes an argument — here is a step,
+   here are thirty thousand of them, here is why the obvious progress metric
+   would have misled you — and an argument has an order. Unnumbered, the same
+   content read as three unrelated widgets stacked up, which is what "info
+   dump" meant. */
+.t2d-act {
+  padding: 24px var(--pad) 26px;
+  border-bottom: 1px solid var(--line);
+}
+.t2d-act:last-of-type { border-bottom: none; }
+.t2d-acthead {
+  display: flex; gap: 13px; align-items: flex-start;
+  max-width: 104ch; margin: 0 0 18px;
+}
+.t2d-num {
+  flex: none; width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center; margin-top: 1px;
+  background: var(--accent); border: 1px solid var(--accent);
+  color: var(--bg); font-size: 11.5px; font-weight: var(--w-loud);
+  font-variant-numeric: tabular-nums;
+}
+.t2d-acthead h3 {
+  margin: 0 0 7px; font-size: var(--fs-body); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--accent); font-weight: var(--w-loud);
+}
+.t2d-lead { margin: 0; font-size: var(--fs-lead); line-height: 1.62; color: var(--ink-2); }
+
+/* ---- panels --------------------------------------------------------------
+   A defined edge for every region. Without them each act was a set of loose
+   columns floating on the page ground with nothing to align to, which is what
+   "all over the place" describes: the elements were placed, but no boundary
+   said where a region began or ended. */
+.t2d-panel {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 15px 16px;
+}
+.t2d-panel h5 {
+  margin: 0 0 12px; padding-bottom: 9px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs-label); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-2); font-weight: var(--w-strong);
+  display: flex; align-items: baseline; gap: 10px;
+}
+/* A panel heading can carry a live value beside its name — the caption the
+   step is running on, in the panel that runs it. Pushed right so the name
+   stays put as the value changes length. */
+.t2d-panel h5 em {
+  margin-left: auto; text-align: right; min-width: 0;
+  font-style: normal; text-transform: none; letter-spacing: 0;
+  font-size: var(--fs-small); font-weight: 400; color: var(--ink-3);
+}
+
+/* ---- act 1: one training step ------------------------------------------- */
+.t2d-steprow {
+  display: grid; grid-template-columns: var(--rail) minmax(0, 1fr) var(--rail);
+  gap: var(--gut); align-items: stretch;
+}
+
+/* THREE ACROSS, not six. This is the most-clicked control on the page and its
+   targets were 29px squares — under any pointer-target guideline and fiddly
+   even with a mouse. Six columns became four (41px), four became three (57px),
+   which is a real button and big enough that you can tell a slime from a cube
+   before you click it. Eight rows of three do not fit, so the strip scrolls;
+   that is the right trade, because the size of the target matters more than
+   seeing all 24 at once. */
+.t2d-pick {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px;
+  max-height: 192px; overflow-y: auto; padding-right: 5px; margin-bottom: 14px;
+}
+.t2d-pick .ex {
+  padding: 3px; border: 1px solid var(--line-soft); border-radius: 6px;
+  background: var(--panel-2); cursor: pointer; line-height: 0;
+}
+.t2d-pick .ex canvas {
+  width: 100%; aspect-ratio: 1; display: block;
+  image-rendering: pixelated; border-radius: 3px; background: var(--canvas-bg);
+}
+.t2d-pick .ex:hover { border-color: var(--raise); }
+.t2d-pick .ex[aria-pressed="true"] {
+  border-color: var(--accent); background: var(--sel-bg);
+}
+
+.t2d-ctls { border-top: 1px solid var(--line-soft); padding-top: 13px; }
+
+/* The noise control, on the row it changes. One line: label, slider, readout,
+   reroll — so it reads as a single instrument rather than four stacked fields,
+   and it sits in the space the panel used to leave empty. */
+.t2d-noise {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 18px; padding-top: 15px;
+  border-top: 1px solid var(--line-soft);
+}
+.t2d-noise label {
+  flex: none; font-size: var(--fs-label); letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ink-2); font-weight: var(--w-strong);
+}
+.t2d-noise input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.t2d-noise output {
+  flex: none; min-width: 58px; font-size: var(--fs-small); color: var(--ink-2);
+  font-variant-numeric: tabular-nums; letter-spacing: .06em;
+}
+.t2d-noise .btn { flex: none; }
+.t2d-ctl {
+  display: block; margin-bottom: 0;
+  font-size: var(--fs-label); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--ink-2); font-weight: var(--w-strong);
+}
+.t2d-ctl select, .t2d-ctl input[type=range] { display: block; width: 100%; margin-top: 6px; }
+.t2d-ctl select {
+  font: inherit; font-size: var(--fs-body); text-transform: none; letter-spacing: 0;
+  padding: 6px 8px; border-radius: 6px;
+  color: var(--sel-ink); background: var(--sel-bg); border: 1px solid var(--sel-line);
+}
+.t2d-ctl input[type=range] { accent-color: var(--accent); }
+.t2d-ctl output {
+  display: block; margin-top: 4px; color: var(--ink-2); font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums; letter-spacing: .06em;
+}
+.t2d-pickwrap .btn { width: 100%; }
+
+/* The loop panel: the tiles, then the verdict on what they show. */
+/* SPACE-BETWEEN, not a single `margin-top: auto` on the last child. The three
+   panels stretch to the tallest of them, so the two shorter ones have slack to
+   place; pushed entirely onto one element it became a single hole, which is
+   the same complaint as before wearing a border. Distributed, the blocks just
+   breathe. */
+.t2d-loop { display: flex; flex-direction: column; justify-content: space-between; }
+.t2d-tiles { display: flex; align-items: flex-start; justify-content: center; gap: 12px; flex-wrap: nowrap; }
+/* Capped: a 16x16 picture blown up past ~112px is not more legible, it is just
+   bigger, and it pushed the panel taller than anything in the act needed. */
+.t2d-tiles figure { margin: 0; flex: 1 1 0; min-width: 0; max-width: 112px; }
+.t2d-tiles canvas {
+  width: 100%; aspect-ratio: 1; display: block; image-rendering: pixelated;
+  background: var(--canvas-bg); border: 1px solid var(--line); border-radius: 7px;
+}
+/* The model's own answer, marked out — it is the only tile on the row the
+   model produced, and the whole row exists to be compared against it. */
+.t2d-tiles .guess canvas { border-color: var(--accent); box-shadow: 0 0 0 3px var(--sel-bg); }
+.t2d-tiles figcaption {
+  margin-top: 9px; text-align: center; font-size: var(--fs-small);
+  color: var(--ink-3); line-height: 1.45;
+}
+.t2d-tiles figcaption b {
+  display: block; font-weight: var(--w-strong); color: var(--ink);
+  font-size: var(--fs-label);
+  letter-spacing: .1em; text-transform: uppercase; margin-bottom: 3px;
+}
+.t2d-tiles figcaption em { font-style: normal; display: block; }
+/* Its own line, always occupied — see the note beside errGain in step.js. */
+.t2d-tiles figcaption i {
+  display: block; font-style: normal; color: var(--accent-2);
+  letter-spacing: .04em; font-variant-numeric: tabular-nums;
+}
+/* The operators sit level with the middle of the TILES, and the tiles are
+   square and sized by the column, so their centre is not at a fixed pixel.
+   Aligning to the row centre and lifting by the caption block puts the glyph
+   on the tile axis at any column width. */
+.t2d-tiles .op {
+  flex: 0 0 auto; color: var(--ink-3); font-size: 16px; line-height: 1;
+  align-self: center; margin-bottom: 46px;
+}
+.t2d-tiles .op.arrow { color: var(--accent); }
+
+.t2d-verdict {
+  margin: 0; padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-body); line-height: 1.6; color: var(--ink-2);
+}
+.t2d-verdict b { font-weight: var(--w-strong); color: var(--accent); }
+
+/* The score rail. */
+.t2d-score { display: flex; flex-direction: column; justify-content: space-between; }
+/* Label ABOVE the number, not beside it. Side by side, "training loss" had
+   ~120px left over from a 32px numeral in a 236px rail and wrapped to two
+   lines against the number's baseline, which read as a mistake. */
+.t2d-lossnum { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+.t2d-lossnum span {
+  font-size: 32px; color: var(--accent); font-variant-numeric: tabular-nums;
+  line-height: 1; font-weight: var(--w-loud);
+}
+.t2d-lossnum em {
+  font-style: normal; font-size: var(--fs-micro); letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-3); font-weight: var(--w-strong);
+}
+.t2d-gauge { width: 100%; height: 26px; display: block; }
+.t2d-implied {
+  margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--line-soft);
+  display: flex; align-items: center; gap: 12px;
+}
+.t2d-implied canvas {
+  width: 60px; height: 60px; flex: none; display: block; image-rendering: pixelated;
+  background: var(--canvas-bg); border: 1px solid var(--line); border-radius: 6px;
+}
+.t2d-implied figcaption { font-size: var(--fs-small); color: var(--ink-3); line-height: 1.5; }
+.t2d-caveat {
+  margin: 0; padding-top: 14px;
+  font-size: var(--fs-small); line-height: 1.55; color: var(--ink-3);
+  border-top: 1px solid var(--line-soft);
+}
+
+/* ---- act 2: the run ------------------------------------------------------ */
+.t2d-body {
+  display: grid; grid-template-columns: var(--rail) minmax(0, 1fr);
+  gap: var(--gut); align-items: stretch;
+}
+.t2d-facts h4 {
+  margin: 0 0 9px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs-label); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-2); font-weight: var(--w-strong);
+}
+.t2d-facts h4:not(:first-child) { margin-top: 18px; }
+.fact {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 5px 0; font-size: var(--fs-small); color: var(--ink-3);
+}
+.fact dt { margin: 0; }
+.fact dd {
+  margin: 0; color: var(--ink-2); font-variant-numeric: tabular-nums;
+  text-align: right; white-space: nowrap;
+}
+.fact.live dd { color: var(--accent); font-weight: var(--w-strong); }
+.factnote {
+  margin: 16px 0 0; padding-top: 13px; border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-small); line-height: 1.55; color: var(--ink-3);
+}
+
+.t2d-main { display: flex; flex-direction: column; }
+
+/* THE PHASE BAR. Segments are sized by how many recorded marks fall in each
+   phase — see buildPhases() for why marks and not steps. */
+.t2d-phases { display: flex; gap: 4px; flex: none; }
+/* A FLEX BASIS, not `0`. Growth is proportional to the number of marks in the
+   phase, and "Noise" is a single mark — from a zero basis it came out 59px wide
+   and its note rendered as "random…". The basis is enough for the label; the
+   proportions still show which phases the recording spends its marks on. */
+.t2d-phases .phase {
+  flex: 1 1 108px; min-width: 0; padding: 8px 10px; text-align: left;
+  border-radius: 6px; background: var(--panel-2); cursor: pointer;
+  border: 1px solid var(--line-soft); transition: background .2s, border-color .2s;
+}
+.t2d-phases .phase:hover { border-color: var(--raise); background: var(--panel); }
+.t2d-phases .phase b {
+  display: block; font-weight: var(--w-strong); font-size: var(--fs-label);
+  letter-spacing: .12em; text-transform: uppercase; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.t2d-phases .phase em {
+  display: block; font-style: normal; font-size: var(--fs-small);
+  color: var(--ink-3); opacity: .85; margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The step each button lands on, so the jump is a promise rather than a
+   surprise. */
+.t2d-phases .pstep {
+  display: block; font-style: normal; margin-top: 4px;
+  font-size: var(--fs-micro); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-3); opacity: .6; font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.t2d-phases .phase.on .pstep, .t2d-phases .phase.done .pstep { opacity: .9; }
+.t2d-phases .phase.on { background: var(--sel-bg); border-color: var(--sel-line); }
+.t2d-phases .phase.on b { color: var(--accent); }
+.t2d-phases .phase.on em { color: var(--ink-2); opacity: 1; }
+/* End of the run: filled rather than tinted, so arriving reads as arriving. */
+.t2d-phases .phase.done { background: var(--accent); border-color: var(--accent); }
+.t2d-phases .phase.done b, .t2d-phases .phase.done em { color: var(--bg); }
+
+/* RESERVED HEIGHT. The note is rewritten at every mark and the sentences are
+   not the same length, so at the marks where it fell from three lines to two
+   the whole sprite grid below jumped up 20px — while playing, the pictures you
+   are supposed to be comparing moved under you. Two lines are reserved whether
+   the text needs them or not. */
+.t2d-note {
+  margin: 14px 0 0; padding-bottom: 14px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs-body); line-height: 1.55; color: var(--ink-2);
+  min-height: calc(12.5px * 1.55 * 2); text-align: center;
+}
+.t2d-note b { font-weight: var(--w-strong); color: var(--accent); }
+
+/* Five across, two rows. `auto-fit` put all ten on one line on a wide window
+   and the sprites came out 74px in a viewport 700px tall — most of the tab was
+   empty. These are the point of the screen; they get the room. */
+.t2d-strip {
+  flex: 1; min-height: 0; display: grid; gap: 12px 16px; align-content: center;
+  justify-content: center; padding-top: 14px;
+  grid-template-columns: repeat(5, minmax(64px, 136px));
+}
+/* `margin: 0` is load-bearing: <figure> carries a UA default of `1em 40px`, so
+   each cell was giving up 80px of its 132px column and the sprites rendered at
+   52px inside a grid that had correctly reserved room for 132. */
+.t2d-cell { text-align: center; margin: 0; }
+.t2d-cell canvas {
+  width: 100%; aspect-ratio: 1; image-rendering: pixelated; display: block;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--canvas-bg);
+}
+.t2d-cell figcaption {
+  font-size: var(--fs-small); color: var(--ink-3); margin-top: 6px; line-height: 1.35;
+}
+
+/* ---- act 3: the curve ---------------------------------------------------- */
+.t2d-chart { padding: 14px 16px; }
+.t2d-loss { width: 100%; height: 120px; display: block; }
+
+/* Pinned to the foot of the tab: it drives acts 2 and 3 at once, so it must
+   stay reachable however far down the page you have scrolled. */
+.t2d-scrub {
+  position: sticky; bottom: 0; z-index: 4;
+  display: flex; align-items: center; gap: 14px; flex: none;
+  padding: 12px var(--pad); background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+.t2d-scrub input[type=range] { flex: 1; accent-color: var(--accent); }
+.t2d-scrub .t {
+  font-size: var(--fs-label); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+/* ---- popovers -----------------------------------------------------------
+   One mechanism for every panel that opens upward from the bottom. Whether it
+   is driven by hover or by click is decided in main.js, not here — see the
+   note in index.html. */
+.pop { position: relative; }
+.poppanel {
+  position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 60;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 24px 60px -24px var(--shadow);
+}
+/* Anchored to the right when the trigger is near the right edge, or a 330px
+   panel hanging off a button 40px from the window edge is half off-screen. */
+.poppanel.right { left: auto; right: 0; }
+/* OPENS DOWNWARD, for a trigger in the header rather than the footer.
+   `.poppanel` is `bottom: calc(100% + 8px)` because every panel in this app
+   used to hang off the bottom bar. Moving the privacy claim to the header left
+   that untouched, so the panel rendered from y=-252 to y=3 — entirely above the
+   window, present in the DOM, and reported as "no longer working". A panel that
+   opens away from its bar needs to know which bar it is on. */
+.poppanel.below { bottom: auto; top: calc(100% + 8px); }
+/* A transparent bridge, so moving the pointer from the button to the panel
+   does not cross a gap and close it. On the CONTAINER, never the panel: an
+   absolutely positioned descendant of a scrolling box counts toward its
+   scrollHeight and invents a scrollbar on content that fits. */
+.hoverpop::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 100%; height: 10px;
+}
+/* The bridge follows the panel. On a header trigger the gap to cross is BELOW
+   the button, and a bridge left above it covers nothing — the pointer crosses
+   8px of dead space on the way down and the panel closes under it. */
+.hoverpop.down::after { bottom: auto; top: 100%; }
+
+.cogpanel {
+  width: 320px; max-height: 62vh; overflow-y: auto;
+  padding: 16px 16px 4px;
+}
+.chk { display: flex; align-items: flex-start; gap: 8px; font-size: var(--fs-small);
+       color: var(--ink-2); margin-bottom: 9px; cursor: pointer; }
+.chk input { accent-color: var(--accent); margin-top: 2px; flex: none; }
+.chk em {
+  display: block; font-style: normal; font-size: var(--fs-small);
+  color: var(--ink-3); margin-top: 2px; line-height: 1.45;
+}
+
+/* CENTRED BY FLEX, and the left padding carries a correction.
+   Two separate reasons the label sat off-centre: a fixed `height` fought
+   `padding: 8px`, leaving the text riding high in the box; and `letter-spacing`
+   adds its gap AFTER the last letter, so the centred run of text is half a gap
+   wider on the right than what you can see. Flex centring fixes the first, and
+   an extra `.1em` of left padding — exactly one letter-space — fixes the
+   second. Any button that changes `--btn-pad` keeps both. */
+.btn {
+  --btn-pad: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: var(--fs-small); letter-spacing: .1em; text-transform: uppercase;
+  font-weight: var(--w-strong);
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--ink-2);
+  border-radius: 5px; cursor: pointer; height: 30px;
+  padding: 0 var(--btn-pad) 0 calc(var(--btn-pad) + .1em);
+}
+.btn:hover { border-color: var(--raise); color: var(--ink); }
+.btn.primary { background: var(--sel-bg); border-color: var(--sel-line); color: var(--sel-ink); }
+
+/* -------------------------------------------------------------- viewport */
+.viewport { position: relative; flex: 1; min-height: 300px; background: var(--view-bg); }
+.viewgrid {
+  position: absolute; inset: 0; display: grid; gap: 1px; background: var(--line-soft);
+}
+/* The track sizes are the DEFAULT; js/ui/splitter.js overwrites them inline
+   once the user drags a gutter, so these only decide the starting split. */
+.viewgrid[data-n="1"] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.viewgrid[data-n="2"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+.viewgrid[data-n="3"], .viewgrid[data-n="4"] {
+  grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+}
+.viewgrid[data-n="3"] .pane:first-child { grid-row: span 2; }
+
+/* ---- resize gutters ------------------------------------------------------
+   Positioned OVER the grid, not inside it: as grid items they would occupy a
+   track and change the geometry they exist to describe. The hit area is wider
+   than the visible line, because an 1px target is a test of aim. */
+.gutter {
+  position: absolute; z-index: 7; background: none; touch-action: none;
+}
+.gutter::after {
+  content: ''; position: absolute; background: var(--line);
+  transition: background .12s;
+}
+.gutter:hover::after, .gutter.dragging::after, .gutter:focus-visible::after {
+  background: var(--accent);
+}
+.gutter-col {
+  top: 0; bottom: 0; width: 14px; margin-left: -7px; cursor: col-resize;
+}
+.gutter-col::after { top: 0; bottom: 0; left: 6px; width: 2px; }
+.gutter-row {
+  left: 0; right: 0; height: 14px; margin-top: -7px; cursor: row-resize;
+}
+.gutter-row::after { left: 0; right: 0; top: 6px; height: 2px; }
+.gutter[hidden] { display: none !important; }
+.pane { position: relative; background: var(--view-bg); min-width: 0; min-height: 0; }
+.pane[hidden] { display: none; }
+.pane canvas { display: block; width: 100%; height: 100%; }
+/* The pane label now carries a one-line description as well as a name: with
+   four abstract plots on screen, a bare title told you nothing. */
+/* NO BOX. The label sat in a bordered white card ~250px wide over the bottom
+   left of every pane — four of them covering the corner of every
+   visualisation, which is where the funnel's trail lands and where the
+   landscape's near peaks are. Text alone, one line, out of the way. */
+.plabel {
+  position: absolute; left: 12px; bottom: 9px; pointer-events: none;
+  max-width: 62%; font-size: var(--fs-label); color: var(--ink-3);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.pmain { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.plabel b {
+  color: var(--ink); font-weight: var(--w-strong); white-space: nowrap;
+  letter-spacing: .12em; text-transform: uppercase;
+}
+.plabel em {
+  font-style: normal; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The view's caveat about itself, under the name it qualifies. Quieter than
+   the description above it: it is a footnote, not a second title. */
+.pnote {
+  color: var(--ink-3); opacity: .8; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pnote:empty { display: none; }
+
+/* Toggles, not tabs. Four plain buttons in a row read as "pick one", so each
+   one carries a tick box and the group is labelled. */
+/* SEE-THROUGH. It floats over a visualisation, and as a near-solid card it was
+   a white rectangle punched into the top-left corner of the picture — the one
+   corner the Funnel's trail starts in. The blur carries the legibility; the
+   fill only has to lift the text off whatever is behind it. The pane notes that
+   used to share this corner now sit top right — see note() in views/draw.js. */
+.vswitch {
+  position: absolute; top: 10px; left: 10px; z-index: 6;
+  display: flex; align-items: center; gap: 2px;
+  background: rgba(255,253,250,.3); backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid rgba(195,177,160,.34); border-radius: 8px; padding: 3px;
+}
+.vswitch button[data-v] {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--fs-small); letter-spacing: .06em;
+  color: var(--ink-3); background: none; border: 1px solid transparent;
+  border-radius: 6px; padding: 5px 9px 5px 6px; cursor: pointer;
+}
+.vswitch button[data-v]:hover { color: var(--ink-2); }
+.tick {
+  width: 12px; height: 12px; border-radius: 3px; flex: none;
+  border: 1px solid var(--line); background: var(--panel); position: relative;
+}
+.vswitch button[aria-pressed="true"] {
+  color: var(--ink); background: var(--panel-2); border-color: var(--line);
+}
+.vswitch button[aria-pressed="true"] .tick { background: var(--accent); border-color: var(--accent); }
+.vswitch button[aria-pressed="true"] .tick::after {
+  content: ''; position: absolute; left: 3.5px; top: 0.5px;
+  width: 3px; height: 7px; border: solid var(--bg);
+  border-width: 0 2px 2px 0; transform: rotate(42deg);
+}
+/* "Only this" is an ACTION, not a state — separated and styled unlike the
+   toggles so it does not read as a fifth view. */
+.vswitch .solo {
+  margin-left: 6px; padding: 5px 10px; cursor: pointer;
+  font-size: var(--fs-label); letter-spacing: .13em; text-transform: uppercase;
+  color: var(--accent-2); background: rgba(192,122,31,.12);
+  border: 1px solid rgba(192,122,31,.42); border-radius: 6px;
+}
+.vswitch .solo:hover:not(:disabled) { background: rgba(192,122,31,.20); }
+.vswitch .solo:disabled { opacity: .32; cursor: default; }
+
+/* IN THE HEADER, top right of the app. The phase is named in words beside the
+   number, because "62%" alone does not say whether that is nearly done or about
+   to start the slow part.
+   It floated over the viewport through three positions before landing here, and
+   the reason none of them worked is structural rather than aesthetic: the
+   viewport TILES, so every position inside it belongs to some pane, and every
+   pane owns its top-right corner for its own "?" button. Top right collided in
+   a single-pane layout, top centre in a two-column one.
+   IT IS IN THE STATUS BAR NOW, beside the model that is running it: which model
+   is loaded, then what it is doing, as one line of session facts. No frame —
+   see the note on `.pill`. It reports, it does not do anything.
+
+   NOWRAP, and that is load-bearing rather than tidy. The status bar is 30px
+   tall, so the moment these four children lay out as anything but a single row
+   the bar crops them: "PAUSED" on one line and "70%" cut in half below it. The
+   same thing happened once already for a different reason — an editing slip
+   left three lines of prose outside a comment, the parser discarded up to the
+   next `}` and took this whole rule with it, and `display` fell back to
+   `block`. There was no error anywhere; the readout simply stacked. */
+.hud {
+  display: flex; align-items: center; flex-wrap: nowrap; gap: 8px;
+  padding: 0; margin-left: -2px; white-space: nowrap; flex: none;
+}
+.hud[hidden] { display: none; }
+.hud .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  flex: none; animation: hudpulse 1.1s ease-in-out infinite;
+}
+.hud .phase {
+  font-size: var(--fs-label); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-2); font-weight: var(--w-strong);
+}
+/* A separator, so it reads as another item on the status line rather than as
+   more of the model pill. */
+.hud::before {
+  content: '·'; color: var(--ink-3); opacity: .5; margin-right: 2px;
+}
+.hud .track {
+  width: 46px; height: 3px; background: var(--track); border-radius: 2px; overflow: hidden;
+}
+.hud .track i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .12s linear; }
+.hud .pct {
+  font-size: var(--fs-small); color: var(--ink); font-variant-numeric: tabular-nums;
+  min-width: 30px; text-align: right; font-weight: var(--w-strong);
+}
+/* Finished is a resting state, not an alarm: the pulse stops and the pill
+   drops back to the ink colours so it reads as a caption, not a warning. */
+.hud.done .dot { animation: none; background: var(--ink-3); }
+.hud.done .track { display: none; }
+.hud.done .pct { display: none; }
+/* Changed: the bar and the percentage describe the run on screen, which is no
+   longer the run the controls describe. "CHANGED 100%" reads as a contradiction
+   — the number is answering a question that has been withdrawn. */
+.hud.stale .track, .hud.stale .pct { display: none; }
+/* A saved run: no percentage, because it is not progressing, and a hollow dot
+   so it does not read as something happening now. */
+.hud.example .track, .hud.example .pct { display: none; }
+.hud.example .dot { animation: none; background: none; border: 1px solid var(--raise); }
+.hud.example .phase { color: var(--ink-3); }
+.hud.stale .dot { animation: none; background: var(--accent); }
+.hud.stale .phase { color: var(--accent); }
+@keyframes hudpulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .hud .dot { animation: none; } }
+
+/* ---- the controls hint ---------------------------------------------------
+   Essential on a first look and clutter thereafter, so it FADES OUT and comes
+   back when the pointer is near the bottom of the viewport.
+   The proximity test lives in main.js and NOT in CSS, and the reason is worth
+   knowing: the obvious build is an absolutely positioned hover zone revealing
+   the hint through a sibling selector. The zone sits over the canvas, so it
+   needs `pointer-events: none` or it swallows a drag started near the edge —
+   and an element with `pointer-events: none` is not a hit-test target, so it
+   NEVER matches `:hover`. The two requirements contradict each other by
+   specification. It is not the selector.
+   CENTRED, AND LIFTED CLEAR OF THE CAPTIONS. Right-aligned was the first
+   attempt and it read as a stray note in the corner. The reason it was not
+   centred is real, though: pane captions sit at bottom-left of EACH pane, so
+   in a two-column split there is one starting at the horizontal midpoint —
+   directly under a centred hint. Centring alone collides; centring plus
+   clearing the caption band (`bottom: 9px` plus its own line) does not. */
+.hint {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: 30px; z-index: 5;
+  margin: 0; font-size: var(--fs-label); color: var(--ink-3);
+  pointer-events: none; white-space: nowrap;
+  opacity: 0; transition: opacity .18s ease;
+}
+.hint.on { opacity: 1; }
+/* On touch there is nothing to hover with, and nothing to drag-to-rotate
+   either, so a hidden hint is simply missing. */
+@media (hover: none) { .hint { display: none; } }
+
+/* ------------------------------------------------------- explanations
+   "What am I looking at?" attached to the thing it explains. An unexplained
+   3-D plot teaches nothing, and an explanation filed in an About box is an
+   explanation nobody reads. */
+.phelp {
+  position: absolute; top: 8px; right: 8px; z-index: 7;
+  width: 22px; height: 22px; border-radius: 50%; padding: 0;
+  border: 1px solid var(--line); background: rgba(255,253,250,.88);
+  color: var(--ink-3); font-size: 11px; cursor: pointer;
+}
+.phelp:hover, .phelp.on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.phelp.inline { position: static; width: 17px; height: 17px; font-size: 9.5px; margin-left: 8px; }
+
+/* A CARD IN THE CORNER, not the whole pane. `inset: 0` at 96% opacity meant
+   reading about a view replaced the view, and the only way out was the button
+   at the bottom of the text. Now it sits under the "?" that opened it, leaves
+   the visualisation visible beside it, and dismisses on click-outside.
+   Capped to the pane's own box on both axes, because these panes get small:
+   in a four-way split one is a quarter of the viewport. */
+.hpanel {
+  position: absolute; top: 36px; right: 8px; z-index: 8;
+  width: min(360px, calc(100% - 16px)); max-height: calc(100% - 46px);
+  overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
+  box-shadow: 0 14px 38px -12px var(--shadow); padding: 14px 16px;
+}
+.hpanel[hidden] { display: none; }
+/* FLOATS UPWARD OVER THE VIEWPORT. It used to be `position: static`, so opening
+   it inserted a real block into the inspector row: the row reflowed, "Your
+   monster" and "One step" fell out of line with each other, and the panel ran
+   past the bottom of the app where the last lines were simply cut off. The row
+   is ~150px tall and the explanations are ~260px — there was never room for it
+   in the flow. Above the row there is a whole viewport. */
+.hpanel.inline {
+  /* Bottom edge just clear of the headings, so the row it explains stays
+     readable underneath; `42vh` keeps the top on screen on a short window,
+     where a flat 300px would run off the top of the viewport.
+     `left` is set by script on open — see positionInline() in main.js. A fixed
+     left edge put the cross-attention explanation at the far left of the row,
+     hundreds of pixels from the "?" that opened it. */
+  position: absolute; inset: auto auto calc(100% - 8px) 14px;
+  width: min(430px, calc(100% - 28px)); max-height: min(300px, 42vh); overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
+  margin: 0; padding: 14px 16px; box-shadow: 0 10px 30px rgba(36,29,26,.14);
+}
+.helpbody h5 {
+  margin: 0 0 9px; font-size: var(--fs-label); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--accent); font-weight: var(--w-loud);
+}
+.hwhat { margin: 0 0 12px; font-size: var(--fs-body); color: var(--ink); line-height: 1.55; }
+.hkey { margin: 0 0 12px; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
+.hkey dt { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.hkey dt b {
+  font-weight: var(--w-strong); font-size: var(--fs-small); color: var(--ink);
+}
+.hkey dd { margin: 0; font-size: var(--fs-small); color: var(--ink-3); line-height: 1.5; }
+.hswatch {
+  width: 15px; height: 11px; border-radius: 3px; flex: none;
+  border: 1px solid var(--line);
+}
+.hwatch {
+  margin: 0; font-size: var(--fs-small); color: var(--ink-2); line-height: 1.6;
+  border-left: 2px solid var(--accent-2); padding-left: 10px;
+}
+.hwatch b { color: var(--accent-2); font-weight: var(--w-strong); }
+.hcaveat {
+  margin: 10px 0 0; font-size: var(--fs-small); color: var(--ink-3); line-height: 1.55;
+  border-top: 1px solid var(--line-soft); padding-top: 9px;
+}
+/* No close button: the explanation cards dismiss on click-outside and Escape
+   like every other panel. `.hclose` went with the full-pane overlay. */
+
+/* In the markup, not in script, so it covers the very first paint. */
+.overlay {
+  position: absolute; inset: 0; z-index: 20; display: grid; place-content: center;
+  gap: 12px; background: rgba(244,239,233,.94); text-align: center; padding: 24px;
+}
+.overlay[hidden] { display: none; }
+.overlay p { margin: 0; color: var(--ink-2); font-size: var(--fs-body); max-width: 46ch; }
+.overlay .obar { width: 220px; height: 3px; background: var(--track); border-radius: 2px; overflow: hidden; margin: 0 auto; }
+.overlay .obar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.overlay.failed p { color: var(--hot); }
+.overlay.failed .obar i { background: var(--hot); }
+
+/* ---------------------------------------------------------------- panels */
+.panel { flex: none; border-top: 1px solid var(--line); background: var(--panel); padding: 10px 14px; }
+.panel[hidden] { display: none; }
+.panel h4 {
+  margin: 0 0 7px; font-size: var(--fs-label); letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-2); font-weight: var(--w-strong);
+}
+/* FLEX, not a grid of equal columns. The inspectors want very different widths
+   — the step strip is four fixed 84px tiles, the attention row is eight small
+   grids, the schedule is a curve that will take whatever it is given. Equal
+   columns would either crop the strip or strand the curve in a third of the
+   window. Each takes what it needs and the flexible one absorbs the rest. */
+.inspectors {
+  /* positioned: the floating "?" panels anchor to this row, not to the page */
+  position: relative;
+  display: flex; flex-wrap: wrap; gap: 14px 26px; align-items: flex-start;
+  padding: 9px 14px 11px;
+}
+.inspectors > div, .inspectors > figure { min-width: 0; }
+/* FIXED HEIGHT, because only some of these headings carry a "?" button. The
+   button is 17px against 15px of text, so the two panels that have one were
+   2px taller than the two that do not — and everything below them, canvases
+   and captions alike, sat 2px low. */
+.inspectors h4 {
+  display: flex; align-items: center; height: 17px; margin-bottom: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#panel-result { flex: 0 0 auto; margin: 0; }
+#panel-strip { flex: 0 0 auto; }
+#panel-attention { flex: 1 1 340px; }
+#panel-schedule { flex: 1 1 280px; }
+.inspectors > [hidden] { display: none; }
+
+/* THE IMAGE BAND. Every panel in this row puts its picture in a band of the
+   same height, so the captions underneath all begin on one line. Without it the
+   strip's labels rode ~28px higher than the result's, which is the
+   misalignment you see before you can name it.
+   SIZED TO THE CONTENT, not to the largest thing in it. At 124 — the result's
+   old size — nothing else came close: the tiles are 88 and the attention grids
+   are ~85, limited by having to fit eight across. Pictures of different heights
+   sharing two grid rows can align at the top or at the bottom but not both, so
+   the surplus has to go somewhere: centred it split above and below, and
+   bottom-aligned it stacked up as 36px between each heading and the pictures
+   under it. The only way to have no gap at either end is for the band to be
+   what the pictures actually are. That also gives ~36px of the window back to
+   the visualisations, which is the better use of it. */
+.inspectors { --imgband: 92px; }
+
+/* THE RESULT, SET APART. It is the thing you asked for; everything else in this
+   row is a diagram of how it got made. Being first was not enough to say so —
+   it sat flush against the step strip and read as its fifth tile. So: bigger
+   than the tiles, its own heading colour, and a hairline rule and real space
+   between it and the mechanism. */
+#panel-result {
+  padding-right: 26px; margin-right: 4px;
+  border-right: 1px solid var(--line-soft);
+}
+/* Heading, picture and caption all centred on the same 124px column. The
+   heading was left-aligned like the rest of the row while the caption was
+   centred under the canvas, so the three parts of the one thing this panel is
+   about lined up on two different axes. */
+#panel-result h4 {
+  color: var(--accent); width: var(--imgband); justify-content: center;
+  /* `overflow: visible` overrides the row's shared ellipsis rule for this one
+     heading. "Your monster" measures 92px against a 92px column — exactly the
+     band, with no slack at all — so any font substitution or a longer word
+     would silently truncate it. Centred, a spill goes evenly to both sides and
+     lands in the 26px of padding before the rule. */
+  overflow: visible;
+}
+/* MARKED OUT BY ITS BORDER, not by being bigger. It used to be a 124px square
+   against 88px tiles, which is what forced the band taller than everything in
+   it. The size was only ever a way of saying "this is the thing you asked for";
+   the accent heading, the rule beside it and an accent border say the same
+   thing and cost the row no height. */
+#panel-result canvas {
+  width: var(--imgband); height: var(--imgband);
+  image-rendering: pixelated; display: block;
+  background: var(--canvas-bg); border-radius: 7px;
+  border: 1px solid var(--accent); box-shadow: 0 0 0 3px var(--sel-bg);
+}
+#panel-result figcaption {
+  /* Matches `.strip`'s row gap exactly — one pixel out and this caption stops
+     sitting on the same line as the four beside it. */
+  width: var(--imgband); margin-top: 7px; text-align: center;
+  font-size: var(--fs-label); color: var(--ink-3); font-variant-numeric: tabular-nums;
+  /* RESERVED HEIGHT, and it is load-bearing. This caption is the tallest thing
+     in its panel, so its line count sets the height of the whole inspector row
+     — and its text changes as the run ends. At three lines running and one line
+     finished, reaching the end shrank the row by 14px and the white panel
+     visibly dropped. Two lines are reserved whether the text needs them or not;
+     the running text was shortened to fit two. Third time this exact bug has
+     appeared in this app: see also `.t2d-note` and `.t2d-head p`. */
+  line-height: 1.5;
+  min-height: calc(var(--fs-label) * 1.5 * 2);
+}
+/* NAMED, not `.inspectors canvas`. That selector is more specific than
+   `.tilecv`, so it was silently deciding the step tiles' width too: they came
+   out 79px wide against 76 tall and every monster in the strip was stretched by
+   4%. Only these two canvases are meant to take the width they are given.
+   Both carry a HEIGHT as well. A canvas with a CSS width and no CSS height is
+   scaled by the aspect ratio of its width/height ATTRIBUTES — 300x150 until the
+   first draw — so on a wide window the empty attention panel opened 450px tall,
+   squeezed the viewport by a third and left the band of white space under the
+   row that reads as a broken layout. panels.js replaces the height as soon as
+   it knows what it needs. */
+#attnCanvas, #schedCanvas { width: 100%; display: block; }
+#attnCanvas { height: 118px; }
+#schedCanvas { height: 118px; }
+
+/* Images on row 1, captions on row 2 — see the note in panels.js. Column flow
+   fills each column top-to-bottom before moving right, which is why every cell
+   is appended in image/caption pairs.
+   BOTTOM-ALIGNED, not centred. The band is sized for the largest picture in the
+   row (the result, which fills it), so centring an 88px tile in it left 18px of
+   air between the tile and its caption while the result's caption sat 6px under
+   its own — the same gap declared once and arriving as two different gaps.
+   Aligned to the foot of the band every picture in the row rests on one line
+   and every caption is the same distance below it. */
+.strip {
+  --tile: 88px;
+  display: grid; grid-template-rows: var(--imgband) auto;
+  grid-auto-flow: column; align-items: end;
+  justify-content: start; gap: 7px 11px;
+}
+.tilecv {
+  width: var(--tile); height: var(--tile);
+  image-rendering: pixelated; display: block;
+  background: var(--canvas-bg); border: 1px solid var(--line); border-radius: 5px;
+}
+.tilecap { text-align: center; font-size: var(--fs-small); color: var(--ink-3); line-height: 1.4; }
+.tilecap b {
+  display: block; color: var(--ink); font-weight: var(--w-strong);
+  font-size: var(--fs-label);
+  letter-spacing: .1em; text-transform: uppercase; margin-bottom: 2px;
+}
+.tilecap em { font-style: normal; display: block; }
+/* In the image row, and lifted to the middle of the TILES rather than of the
+   band — the band is taller than they are, so `end` alone would put the
+   operators level with their bottom edges. Derived from `--tile` so it cannot
+   drift when the tile size changes. */
+.arrow {
+  color: var(--ink-3); font-size: 15px; line-height: 1; text-align: center;
+  padding: 0 2px; margin-bottom: calc((var(--tile) - 1em) / 2);
+}
+
+.timeline {
+  flex: none; display: flex; align-items: center; gap: 12px;
+  border-top: 1px solid var(--line); background: var(--panel); padding: 10px 14px;
+}
+.timeline input[type=range] { flex: 1; accent-color: var(--accent); }
+.timeline .t {
+  font-size: var(--fs-label); color: var(--ink-3); letter-spacing: .1em;
+  text-transform: uppercase; font-weight: var(--w-strong);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.timeline .t.nowrap { min-width: 76px; text-align: right; }
+
+@media (max-width: 900px) {
+  .body { grid-template-columns: 1fr; overflow-y: auto; }
+  .side { border-right: none; border-bottom: 1px solid var(--line); }
+  .panel.two { grid-template-columns: 1fr; }
+  body { overflow: auto; }
+}

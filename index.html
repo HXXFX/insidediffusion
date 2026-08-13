@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside Diffusion</title>
+<meta name="description" content="Watch a diffusion model think, one step at a time. Runs entirely in your browser.">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./favicon.png">
+<link rel="stylesheet" href="./css/app.css">
+</head>
+<body>
+
+<header class="bar">
+  <a class="brand" href="./" title="Start over — unsaved work is lost">
+    <span class="mark" id="brandMark" aria-hidden="true"></span>
+    <span class="wordmark" id="brandWord" role="img" aria-label="Inside Diffusion"></span>
+  </a>
+  <nav class="tabs" id="modes" aria-label="Mode"></nav>
+  <div class="spacer"></div>
+  <!-- THE CLAIM, top right — the most prominent place in the app that is not
+       the work itself. It is the one thing a visitor has to take on trust,
+       so it sits beside the name rather than filed in the footer.
+       Hover, not click: there is nothing in it to operate. -->
+  <div class="pop hoverpop down privacy" id="privacy">
+    <button class="privpill" id="privBtn" aria-expanded="false" aria-controls="privPanel">
+      <span class="pdot" aria-hidden="true"></span> Runs locally
+    </button>
+    <div class="poppanel privpanel right below" id="privPanel" hidden>
+      <b>Nothing leaves your machine.</b>
+      <p>The model, its weights and every step you see are downloaded once and
+         run inside this tab, on your own processor. Pictures you open are read
+         in the page and never uploaded; nothing you type is transmitted. There
+         is no account, no tracking and no analytics, and the monsters you make
+         are yours.</p>
+      <div class="plate" id="plate"></div>
+    </div>
+  </div>
+</header>
+
+<!--
+  ONE COLUMN, NOT TWO. The sidebar is gone.
+
+  It had accumulated six numbered sections and still could not show the prompt
+  as a sentence: in a 268px column "a green slime with three eyes, horns, bat
+  wings and two legs" wrapped over five lines, which is a stack of controls
+  wearing a sentence's punctuation. A sentence has to be on one line to read as
+  one, and the only place with room for that is the full width of the window.
+
+  So the prompt moved to a dock across the bottom and everything else moved
+  into a settings popover. What is left on screen at rest is the thing the app
+  is for — the visualisation — plus the one line you edit.
+-->
+<main class="stage">
+  <div class="viewport">
+    <div class="vswitch" id="viewSwitch" role="group" aria-label="Views"></div>
+
+    <!-- "Rotate" was a lie in one pane: the Network is a flat diagram and
+         drags pan it instead. One hint covers all four panes, so it names the
+         gesture rather than the effect. -->
+    <p class="hint" id="hint">Drag to move · wheel to zoom · double-click to reset</p>
+    <div class="viewgrid" id="viewGrid" data-n="2"></div>
+
+    <!-- The training mode replaces the view grid rather than joining it: it is
+         a different model from the one the generate tab runs, and side by side
+         they would invite exactly the misreading the Landscape view already
+         has to carry a caveat about. -->
+    <!--
+      THREE ACTS, IN THE ORDER THE QUESTION IS ACTUALLY ASKED.
+
+      This tab used to answer "what did training produce?" — samples at 27
+      marks, a loss curve, a rail of facts — and never "what IS a training
+      step?". So it read as an info dump: a page of consequences of a process
+      the reader had never been shown. Every number on it was true and none of
+      it added up to an explanation.
+
+        ACT 1  One step, on the real model and on real training data. The
+               mechanism, operable. Everything else on the page is 30,000
+               repetitions of what happens here.
+        ACT 2  The run those steps produced, with the phases as navigation.
+        ACT 3  What the loss says, and the thing it conspicuously does not.
+
+      Act 1 is first because it is the only part that explains anything; the
+      replay is evidence, and evidence after the claim is a different reading
+      experience from evidence instead of one.
+    -->
+    <div class="train2d" id="train2d" hidden>
+
+      <!-- ================================================== ACT 1: the step -->
+      <section class="t2d-act" id="actStep">
+        <header class="t2d-acthead">
+          <span class="t2d-num">1</span>
+          <div>
+            <h3>One training step</h3>
+            <p class="t2d-lead">Hide a real training picture under noise. Ask
+              the model what noise was added. Score how close it got. That is the
+              whole loop — running here, live, on the real model.</p>
+          </div>
+        </header>
+
+        <!-- THREE PANELS ON ONE GRID: what you feed it, what happens, what it
+             scored. The middle used to be the tiles alone, so its column had
+             content in the top 40% and 240px of nothing under it, while the two
+             things that describe the tiles — the caption they came from and the
+             verdict on the result — sat in the side rails away from what they
+             refer to. Text belongs with its picture. -->
+        <div class="t2d-steprow">
+          <section class="t2d-panel t2d-pickwrap">
+            <h5>Pick a training picture</h5>
+            <!-- Pictures, not a dropdown of words: you are choosing a picture.
+                 Four across rather than six — at six they were 29px, which is
+                 a small target for the most-clicked control on the page. -->
+            <div class="t2d-pick" id="stepPick" role="group" aria-label="Training picture"></div>
+            <div class="t2d-ctls">
+              <label class="t2d-ctl">Colour
+                <select id="stepColour" aria-label="Colour"></select>
+              </label>
+            </div>
+          </section>
+
+          <!-- The loop as a row, left to right, with the operators between the
+               tiles, under the caption the picture was trained with. -->
+          <section class="t2d-panel t2d-loop">
+            <h5>The step<em id="stepSentence">—</em></h5>
+            <div class="t2d-tiles" id="stepTiles">
+              <figure><canvas data-k="x0" width="16" height="16"></canvas>
+                <figcaption><b>the picture</b><em>training data</em></figcaption></figure>
+              <span class="op">+</span>
+              <figure><canvas data-k="noise" width="16" height="16"></canvas>
+                <figcaption><b>noise</b><em>known amount</em></figcaption></figure>
+              <span class="op">=</span>
+              <figure><canvas data-k="xt" width="16" height="16"></canvas>
+                <figcaption><b>what it sees</b><em>its only input</em></figcaption></figure>
+              <span class="op arrow">→</span>
+              <figure class="guess"><canvas data-k="eps" width="16" height="16"></canvas>
+                <figcaption><b>its answer</b><em>predicted noise</em></figcaption></figure>
+              <span class="op">−</span>
+              <figure><canvas data-k="err" width="16" height="16"></canvas>
+                <!-- The amplification is printed because it is real: the error is
+                     too small to see at the same gain as the tiles beside it. -->
+                <figcaption><b>the error</b><em>answer − truth
+                  <i id="stepErrGain"></i></em></figcaption></figure>
+            </div>
+
+            <!-- The noise control sits WITH the step it changes, not in the
+                 picker rail. It was over there because that rail collected all
+                 the inputs, which put the panel's main control across the page
+                 from the five tiles it redraws — and left this panel stretching
+                 to the rail's height with 170px of nothing in it. -->
+            <div class="t2d-noise">
+              <label for="stepNoise">How much noise</label>
+              <input type="range" id="stepNoise" aria-label="Noise level">
+              <output id="stepNoiseOut">t = —</output>
+              <button class="btn" id="stepRun">New noise</button>
+            </div>
+
+            <p class="t2d-verdict" id="stepVerdict">—</p>
+          </section>
+
+          <section class="t2d-panel t2d-score">
+            <h5>The score</h5>
+            <div class="t2d-lossnum"><em>training loss</em><span id="stepLoss">—</span></div>
+            <canvas id="stepGauge" class="t2d-gauge"></canvas>
+            <figure class="t2d-implied">
+              <canvas data-k="x0hat" width="16" height="16"></canvas>
+              <figcaption>the picture its<br>answer implies</figcaption>
+            </figure>
+            <!-- Said plainly, because an animated loop invites exactly this
+                 misreading and the app has been caught overclaiming once. -->
+            <p class="t2d-caveat">Training would now nudge the weights to shrink
+              that error, and repeat 30,000 times. This tab cannot — these
+              weights are already finished.</p>
+          </section>
+        </div>
+      </section>
+
+      <!-- =================================================== ACT 2: the run -->
+      <section class="t2d-act" id="actRun">
+        <header class="t2d-acthead">
+          <span class="t2d-num">2</span>
+          <div>
+            <h3>Thirty thousand steps</h3>
+            <p class="t2d-lead">Ten prompts, drawn by the real model at 27 points
+              in its own run. Not a simulation — this is what it could actually
+              do at each of them.</p>
+          </div>
+        </header>
+
+        <!-- Same grid as act 1: the rail is the same width and starts at the
+             same left edge, so the page has a spine to read down. -->
+        <div class="t2d-body">
+          <aside class="t2d-panel t2d-facts" id="trainFacts"></aside>
+          <section class="t2d-panel t2d-main">
+            <!-- BUTTONS. They looked like buttons and were not, which is the
+                 one combination with no defence. The phases are the only
+                 landmarks in the run, so jumping to them is worth having. -->
+            <div class="t2d-phases" id="trainPhases" role="group" aria-label="Jump to a phase"></div>
+            <p id="trainBlurb" class="t2d-note">Drag the slider to move through the run.</p>
+            <div class="t2d-strip" id="trainStrip"></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ================================================== ACT 3: the loss -->
+      <section class="t2d-act" id="actLoss">
+        <header class="t2d-acthead">
+          <span class="t2d-num">3</span>
+          <div>
+            <h3>Why the curve lies</h3>
+            <!-- Both numbers are measured from the run's own files, not typed
+                 in: the loss from history.json, the change by differencing the
+                 recorded sprites mark to mark. See measureChange().
+                 THE FIRST VERSION OF THIS SECTION CLAIMED THE TWO CURVES
+                 DISAGREE — that watching the loss would mislead you about when
+                 the pictures settled. Measuring it killed the idea: by step 200
+                 the loss is at 15.9% of where it started and the picture change
+                 is at 15.7%. They track each other almost exactly. The real
+                 lesson was the one both curves were showing all along. -->
+            <p class="t2d-lead">The loss, with how much the pictures actually
+              changed drawn over it. They agree closely — which is the trap. Both
+              fall 84% of the way by step 200, while the output is still coloured
+              smears, and both look flat by step 1,000 with a factor of seven
+              still to go. That last 7× is the difference between a blob and a
+              monster.</p>
+          </div>
+        </header>
+        <div class="t2d-panel t2d-chart">
+          <canvas id="trainLoss" class="t2d-loss"></canvas>
+        </div>
+      </section>
+
+      <!-- ONE TRANSPORT for the whole tab, pinned to the bottom. It drives the
+           position in the run, and acts 2 and 3 both read that position — the
+           sprites and the marker on the curve are two views of one number, so
+           there is one control rather than one each.
+           A scrubber alone made this a slideshow you had to operate. Play runs
+           the 30,000 steps as an animation, which is the thing worth watching;
+           the slider is for going back to a moment you noticed. -->
+      <div class="t2d-scrub">
+        <button class="btn primary" id="trainPlay">Play the run</button>
+        <span class="t">step 0</span>
+        <input type="range" id="trainScrub" min="0" max="1" value="0" aria-label="Training step">
+        <span class="t" id="trainEnd">step —</span>
+      </div>
+    </div>
+
+    <div class="overlay" id="overlay">
+      <p id="overlayText">Starting…</p>
+      <div class="obar"><i id="overlayBar"></i></div>
+    </div>
+  </div>
+
+  <!-- ONE ROW, not three stacked panels. Each inspector used a fraction of the
+       window's width and then took a full band of its height, so the page had
+       a column of half-empty strips down it. Side by side they fit the space
+       they actually need. -->
+  <div class="panel inspectors" id="inspectors">
+    <!-- THE RESULT, FIRST AND BIGGEST.
+         It was not shown anywhere at all. The finished monster existed only as
+         the third of four small tiles inside "one step, taken apart", labelled
+         X0-HAT — which is the right name for it in that diagram and no help
+         whatsoever to someone looking for their picture. Asked where the output
+         was, the honest answer was that there wasn't one. -->
+    <figure id="panel-result">
+      <h4>Your monster</h4>
+      <canvas id="resultCanvas" width="16" height="16"></canvas>
+      <figcaption id="resultNote">—</figcaption>
+    </figure>
+    <div id="panel-strip">
+      <h4>One step, taken apart</h4>
+      <div class="strip" id="strip"></div>
+    </div>
+    <!-- Headings are NAMES ONLY. "Cross-attention — which pixels listen to
+         which word" wrapped to two lines while "Your monster" stayed on one, so
+         every panel's content started at a different height and the row looked
+         broken. The explanation was always a click away on the "?" beside it. -->
+    <div id="panel-attention" hidden>
+      <h4>Cross-attention</h4>
+      <canvas id="attnCanvas"></canvas>
+    </div>
+    <div id="panel-schedule" hidden>
+      <h4>Noise schedule</h4>
+      <canvas id="schedCanvas"></canvas>
+    </div>
+  </div>
+
+  <!-- The scrubber sits BELOW the inspectors, directly above the dock.
+       In the middle of the page it read as a divider between two unrelated
+       halves; here it is adjacent to the controls it belongs with, and the
+       thing it scrubs (the step tiles) is immediately above it. -->
+  <div class="timeline">
+    <span class="t">all noise</span>
+    <input type="range" id="scrub" min="0" max="1" value="0" aria-label="Step">
+    <span class="t">finished</span>
+    <span class="t nowrap" id="tNow">t = —</span>
+  </div>
+
+</main>
+
+<!--
+  THE DOCK. One line: your picture, your sentence, and Run.
+
+  Each control is LABELLED. The image slot and the sentence were both bare, and
+  a 52px dashed square next to a row of dropdowns does not announce itself as
+  "the starting picture" to anyone who has not been told.
+-->
+<footer class="dock" id="dock">
+  <!-- The image slot is always here, not behind a tab.
+       Text-to-image and image-to-image were two tabs running the same code with
+       one argument different. Splitting them made the user choose a MODE before
+       they knew what either did, and the choice was recoverable only by losing
+       the prompt they had built. Now: no image, and it generates from the words;
+       drop one in, and it starts from your picture instead. -->
+  <div class="dock-field">
+    <!-- "From a picture", not "Start from a picture — optional". The long form
+         was wider than the 52px control under it and stretched the whole
+         column, pushing the sentence off its natural position. A dock label
+         should be shorter than the thing it labels. -->
+    <span class="dock-label" id="imgLabel">From a picture</span>
+    <!-- A WIDE CONTROL, NOT A SQUARE. As a 52px dashed tile it was the only
+         thing in the dock that was not the height of a dropdown, so the row had
+         one item sticking out above and below everything beside it, and the two
+         labels above could not sit on one line. Same height as the selects and
+         the buttons; the thumbnail lives inside it once there is one. -->
+    <div class="dock-img" id="dropzone">
+      <button class="dock-imgbtn" id="openBtn" aria-labelledby="imgLabel">
+        <canvas id="preview" width="16" height="16" hidden></canvas>
+        <span id="dropHint">+ Add image</span>
+      </button>
+      <button class="dock-clear" id="clearImg" hidden aria-label="Remove the image">×</button>
+      <input type="file" id="fileInput" accept="image/*" hidden>
+    </div>
+  </div>
+
+  <div class="dock-field dock-prompt">
+    <span class="dock-label">Describe your monster</span>
+    <div id="controlsPrompt"></div>
+    <p class="note" id="promptNote" hidden></p>
+  </div>
+
+  <div class="dock-actions">
+    <span class="runstat"><span id="stepOf">step — / —</span><span id="stepMs"></span></span>
+    <!-- CLICK, not hover: it holds sliders. Closes on click-outside and Escape.
+         A named button, not a bare gear — an icon alone made people guess. -->
+    <div class="pop" id="settings">
+      <button class="btn" id="settingsBtn" aria-expanded="false" aria-controls="settingsPanel">
+        More settings
+      </button>
+      <div class="poppanel cogpanel" id="settingsPanel" hidden>
+        <div id="controlsModel"></div>
+        <div id="controlsSampling"></div>
+        <div id="runControls"></div>
+        <div class="grp">
+          <h3>Inspect</h3>
+          <div id="inspect"></div>
+        </div>
+        <div class="grp">
+          <details>
+            <summary class="grp-sum">Words it knows</summary>
+            <div id="wordlist">
+              <p class="wl-intro" id="wlLoading">Loading the word list…</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+    <button class="btn" id="restart">Restart</button>
+    <button class="btn primary big" id="play">Run</button>
+  </div>
+</footer>
+
+<!--
+  THE STATUS BAR. What the app is, what it is running, and what it is doing —
+  out of the way of the work.
+
+  THERE IS NO ABOUT PANEL. It held three headings that nobody opened an ⓘ to
+  read. What it actually carried that mattered was two things, and both now live
+  where they are already being looked at: the description heads the log, which
+  is the panel people do open, and the provenance stamp sits under the privacy
+  claim it belongs with.
+
+  HOW PANELS OPEN, decided once and applied everywhere:
+    hover (+ focus)  passive text you read and leave — Runs locally.
+    click            anything with controls or scrollable history — More
+                     settings, the log. Closes on click-outside and Escape.
+    hover AND click  every "?" in the app: hover to peek, click to pin. An
+                     explanation is neither of the first two — see the note in
+                     js/ui/popover.js.
+-->
+<div class="statusbar">
+  <!-- A FRAMED button. As bare text with a glyph it read as a label, and the
+       count beside it made it look like a readout rather than something to
+       press. -->
+  <div class="pop" id="logpop">
+    <button class="statusbtn framed" id="logBtn" aria-expanded="false" aria-controls="logPanel">
+      <span aria-hidden="true">▤</span> Log <em id="logCount">0</em>
+    </button>
+    <div class="poppanel logpanel" id="logPanel" hidden>
+      <!-- The app's own description, at the top of the panel most likely to be
+           opened by someone wondering what they are looking at. The word count
+           comes from the model manifest, never a hardcoded copy: it read 22 for
+           a while after the vocabulary changed to 37, which is exactly the kind
+           of quiet lie a typed-in number tells. -->
+      <div class="logintro">
+        <b>Inside Diffusion</b>
+        <span>A ~1.2-million-parameter diffusion model running entirely in this
+          tab, with every internal step drawn as it happens. It makes
+          16&nbsp;×&nbsp;16 pixel monsters from a closed vocabulary of
+          <em id="logWords">…</em> words in six slots — the prompt is dropdowns
+          rather than a text box so you cannot ask for a word it has never seen.
+          Not an image generator: Stable Diffusion has about 860&nbsp;million
+          parameters. The point is that you can see inside this one.</span>
+      </div>
+      <div class="loghead">
+        <span>Activity</span>
+        <span class="spacer"></span>
+        <button class="ghost" id="logCopy">Copy</button>
+        <button class="ghost" id="logClear">Clear</button>
+      </div>
+      <ul class="loglist" id="logList"></ul>
+    </div>
+  </div>
+
+  <!-- Which model is loaded is a fact about the session, like the log — not a
+       title. It sat in the header opposite the brand, where it read as part of
+       the app's name. -->
+  <span class="pill" id="modelInfo" data-reveal hidden></span>
+
+  <!-- RUN PROGRESS, beside the model that is running it. Both are facts
+       about this session rather than about the app, so they read as one
+       line: which model is loaded, then what it is doing. This spent four
+       positions floating over the viewport before landing here — see the
+       note on `.hud` in the CSS for why nowhere inside a tiled viewport
+       works. -->
+  <div class="hud" data-reveal hidden>
+    <span class="dot"></span>
+    <span class="phase" id="phase" aria-live="polite">Ready</span>
+    <span class="track"><i id="bar"></i></span>
+    <span class="pct" id="pct">0%</span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <!-- LIVE UPDATE, as a toggle rather than an assumption.
+       Every change re-ran the model — a word, a slider, a checkbox — which
+       is the right default for exploring and the wrong one when you are
+       setting up several things before you want to see any of them. Off,
+       the changes are kept and Run is how you spend the four seconds.
+       Here rather than in the dock because it is a preference about how the
+       app behaves, not a control for this run. The dock row is your picture,
+       your sentence and Run; a fourth button in it made that a toolbar. -->
+  <button class="statusbtn framed live" id="live" aria-pressed="true"
+          title="Re-run automatically when you change something">
+    <span class="ldot" aria-hidden="true"></span> Live
+  </button>
+
+</div>
+
+<p class="sr" id="announce" role="status" aria-live="polite"></p>
+
+<!--
+  Watchdog. Plain inline script, no module: if main.js never runs — a syntax
+  error, a failed import, an old browser — the markup overlay would sit there
+  saying "Starting..." forever. This is the only thing that can replace it,
+  because it lives outside the module graph.
+-->
+<script>
+  setTimeout(function () {
+    var o = document.getElementById('overlay');
+    if (o && !o.hidden && !window.__app) {
+      document.getElementById('overlayText').textContent =
+        'The app did not start. This needs a modern browser with ES modules and Web Workers. ' +
+        'If you are opening the file directly, it must be served over http — see the README.';
+      o.className = 'overlay failed';
+    }
+  }, 12000);
+</script>
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>

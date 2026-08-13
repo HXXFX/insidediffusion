@@ -1,0 +1,25 @@
+{
+ "default": "fast",
+ "models": [
+  {
+   "name": "fast",
+   "label": "Fast",
+   "blurb": "Smaller and quicker. Good on any machine.",
+   "params": 1183523,
+   "bytes": 2367046,
+   "base_ch": 32,
+   "dtype": "float16",
+   "trained_steps": 30000
+  },
+  {
+   "name": "detailed",
+   "label": "Detailed",
+   "blurb": "Twice the size, cleaner shapes. Wants a desktop.",
+   "params": 2391891,
+   "bytes": 4783782,
+   "base_ch": 48,
+   "dtype": "float16",
+   "trained_steps": 30000
+  }
+ ]
+}
