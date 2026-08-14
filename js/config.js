@@ -250,10 +250,11 @@ export const VIEWS = [
       key: [
         ['accent', 'The clay trail', 'the route your picture has taken so far'],
         ['accent-2', 'The amber dot', 'where your picture is right now'],
-        ['ink-3', 'Pale specks on the floor', '500 real training images, flattened onto the ground'],
+        ['pic', 'The picture beside the dot', 'its guess at the finished monster, redrawn every step'],
+        ['pic', 'Specks on the floor', '500 real training monsters, each painted its own colour — the three nearest to you are shown as pictures'],
         ['axis', 'Height', 'how much noise is left — top is pure static, the floor is clean'],
       ],
-      watch: 'The trail starts high above the floor and finishes inside the white cloud. That is the whole job of the model: steer random static until it lands among things it has seen before.',
+      watch: 'The trail starts high above the floor and finishes among the coloured specks — and the three pictures show what it landed nearest. That is the whole job of the model: steer random static until it lands among things it has seen before.',
     },
   },
   {
@@ -263,17 +264,24 @@ export const VIEWS = [
       what: 'A map of where believable pictures live. The ground rises where pictures are likely and stays flat where they are not.',
       key: [
         ['surface', 'The hills', 'how likely a picture at that spot is'],
-        ['accent-2', 'The amber dot', 'where your picture sits on the map'],
+        ['pic', 'The picture above each hill', 'a real training monster from that peak — what kind of thing lives there'],
+        ['accent-2', 'The amber dot', 'where your picture sits, with its current guess above it'],
         ['axis', 'σ (sigma)', 'how much noise is left, printed bottom right'],
       ],
-      watch: 'At the start there is one wide, soft hill — almost anything is possible. As the noise drains away, sharp separate peaks appear and your dot settles onto one of them. That is the picture becoming specific.',
+      watch: 'At the start there is one wide, soft hill — almost anything is possible. As the noise drains, separate peaks appear, each with its own kind of monster on top, and your dot settles onto one. That is the picture becoming specific.',
       // Stated on the view itself as well. Sitting in a tile beside the funnel
       // this could otherwise be read as depicting your image, which it cannot.
       caveat: 'This is a flat shadow of a 768-dimensional space, so it shows roughly a quarter of the real picture. It is honest about the data, but it is not your image.',
     },
   },
   {
-    id: 'voxels', label: 'Towers', letter: 'C', default: false,
+    /* ALL FOUR ARE ON BY DEFAULT. Two were, on the reasoning that a quarter
+       pane is small and four abstract plots at once is a lot to meet. What that
+       missed is that the four are not four takes on the same thing — they answer
+       different questions, and the one people connect with first turned out to
+       be Towers, which was off. Measured cost of the change: 55 fps to 43 with
+       all four drawing, which is still smooth to orbit. */
+    id: 'voxels', label: 'Towers', letter: 'C', default: true,
     short: 'One tower per pixel.',
     help: {
       what: 'One tower for each pixel of your 16 × 16 image, so 256 towers standing on a grid.',
@@ -285,17 +293,18 @@ export const VIEWS = [
     },
   },
   {
-    id: 'network', label: 'Network', letter: 'D', default: false,
+    id: 'network', label: 'Network', letter: 'D', default: true,
     short: 'The model your picture passes through.',
     help: {
       what: 'The neural network your picture passes through, once per step. It shrinks the image down, thinks, then builds it back up.',
       key: [
         ['box', 'Each box', 'one layer. The label is its size and how many channels it holds'],
         ['tile', 'The small grey tiles', 'the ACTUAL numbers inside that layer right now, not an illustration'],
+        ['pic', 'Goes in, comes out', 'the picture handed to the network, and the one it hands back'],
         ['dash', 'Dashed lines', 'shortcuts that carry fine detail past the middle so it is not lost'],
-        ['accent-2', 'The amber arrow', 'where the words of your prompt enter'],
+        ['accent-2', 'The amber arrow and the spark', 'where your prompt enters; the spark is one trip through the network, once per step'],
       ],
-      watch: 'The image goes 16 → 8 → 4 and back to 16. The narrow middle is where the model considers the whole picture at once; the shortcuts are what keep the edges sharp.',
+      watch: 'The image goes 16 → 8 → 4 and back to 16. The narrow middle is where the model considers the whole picture at once; the shortcuts are what keep the edges sharp. When the spark stops running, the run has finished.',
     },
   },
 ];

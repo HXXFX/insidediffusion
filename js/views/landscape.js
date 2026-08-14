@@ -28,7 +28,7 @@
 
 
 import { theme, alpha, fade } from '../theme.js';
-import { fit, caption, note } from './draw.js';
+import { fit, caption, note, sprite } from './draw.js';
 
 const G = 44;            // surface grid resolution
 const SPLAT = 72;        // density accumulation grid
@@ -40,7 +40,7 @@ export const id = 'landscape';
 export const label = 'Landscape';
 
 export function create(ctx) {
-  const { projector } = ctx;
+  const { projector, cloudPics } = ctx;
   const cloudXY = new Float32Array(projector.cloudN * 2);
   const acc = new Float32Array(SPLAT * SPLAT);
   const tmp = new Float32Array(SPLAT * SPLAT);
@@ -128,6 +128,65 @@ export function create(ctx) {
     return peak || 1;
   }
 
+  /**
+   * The hills, and which monster makes each one.
+   *
+   * WHY. The surface is exact and it already moves — it rebuilds every frame
+   * and sharpens as noise drains — but every hill looked the same as every
+   * other hill, so "where believable pictures live" was a caption rather than
+   * something on screen. A peak in this surface is a place where many training
+   * images sit close together, which means it has a LOOK, and the training
+   * image nearest its summit is a fair representative of it.
+   *
+   * That also makes the view's motion legible for the first time: at high noise
+   * there is one broad hill and one face on it, and as the noise drains the hill
+   * splits into several, each acquiring its own. The splitting was always drawn;
+   * now it can be read.
+   *
+   * Local maxima on the (G+1)^2 grid, non-max-suppressed by `sepCells` so two
+   * summits of the same hill do not both count, and thresholded so the flats
+   * never sprout a face.
+   */
+  function peaks(peak, want, sepCells) {
+    const out = [];
+    for (let j = 1; j < G; j++) {
+      for (let i2 = 1; i2 < G; i2++) {
+        const v = dens[j * (G + 1) + i2];
+        if (v < peak * 0.42) continue;
+        let top = true;
+        for (let dj = -1; dj <= 1 && top; dj++) {
+          for (let di = -1; di <= 1; di++) {
+            if (!di && !dj) continue;
+            if (dens[(j + dj) * (G + 1) + i2 + di] > v) { top = false; break; }
+          }
+        }
+        if (top) out.push({ i: i2, j, v });
+      }
+    }
+    out.sort((a, b) => b.v - a.v);
+    const kept = [];
+    for (const c of out) {
+      if (kept.some((o) => Math.hypot(o.i - c.i, o.j - c.j) < sepCells)) continue;
+      kept.push(c);
+      if (kept.length === want) break;
+    }
+    return kept;
+  }
+
+  /** The training point nearest a grid position, in the CURRENT (noised) cloud
+   *  — `buildDensity` has already filled cloudXY at this alphaBar, so the
+   *  answer matches the surface actually on screen rather than the clean data. */
+  function nearestCloud(wx, wz) {
+    const sc2 = 1 / (projector.scale || 1);
+    let best = -1, bd = 1e9;
+    for (let n = 0; n < projector.cloudN; n++) {
+      const dx = cloudXY[n * 2] * sc2 - wx, dz = cloudXY[n * 2 + 1] * sc2 - wz;
+      const d = dx * dx + dz * dz;
+      if (d < bd) { bd = d; best = n; }
+    }
+    return best;
+  }
+
   return {
     draw(canvas, cam, snaps, i) {
       const { g, w, h } = fit(canvas);
@@ -177,6 +236,28 @@ export function create(ctx) {
         g.lineWidth = 0.5; g.stroke();
       }
 
+      /* A FACE ON EACH HILL. Drawn after the surface and before the sample, so
+         the run's own marker still wins where they overlap. */
+      const pics = cloudPics && cloudPics.data;
+      if (pics) {
+        const tp = Math.max(14, Math.min(22, Math.min(w, h) * 0.05));
+        for (const c of peaks(peak, 3, G * 0.22)) {
+          const X = (c.i / G) * 2 - 1, Z = (c.j / G) * 2 - 1;
+          const n = nearestCloud(X * RANGE, Z * RANGE);
+          if (n < 0) continue;
+          cam.project(X * RANGE, (c.v / peak) * HEIGHT - 0.34, Z * RANGE, cx, cy, sc, p);
+          // Sat ON the summit the picture hid the peak it was labelling, the
+          // same mistake the marker made. It floats just above instead, with a
+          // hairline down to the point it belongs to.
+          const sy = p[1] - tp / 2 - 9;
+          g.strokeStyle = alpha(theme.ink, .22); g.lineWidth = 1;
+          g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(p[0], sy + tp / 2); g.stroke();
+          sprite(g, pics.tensor(n), pics.size, p[0], sy, tp);
+          g.strokeStyle = alpha(theme.ink, .34); g.lineWidth = 1;
+          g.strokeRect(p[0] - tp / 2 - 0.5, sy - tp / 2 - 0.5, tp + 1, tp + 1);
+        }
+      }
+
       // where THIS sample currently sits on the surface
       if (snap) {
         projector.project(snap.x, proj);
@@ -186,8 +267,37 @@ export function create(ctx) {
         const gi = Math.round(((X + 1) / 2) * G), gj = Math.round(((Z + 1) / 2) * G);
         const d = dens[gj * (G + 1) + gi] / peak;
         cam.project(X * RANGE, d * HEIGHT - 0.34 + 0.05, Z * RANGE, cx, cy, sc, p);
-        g.fillStyle = alpha(theme.accent2, .18); g.beginPath(); g.arc(p[0], p[1], 13, 0, 7); g.fill();
-        g.fillStyle = theme.accent2; g.beginPath(); g.arc(p[0], p[1], 4, 0, 7); g.fill();
+        /* THE MARKER IS THE PICTURE. This view answers "where does your monster
+           sit among believable pictures", and it was answering with an amber
+           dot — so the "your" in "your sample" was a label rather than
+           something you could see. Drawing `x0` there makes the claim
+           self-evident: that is your monster, and that is where it sits. */
+        /* PICTURE ABOVE, MARKER ON THE SURFACE. Where the sample sits on the
+           map is the entire answer this view gives, so the picture must not
+           cover it — it stands on a stem well clear, and the marker underneath
+           keeps full precision. */
+        const px = Math.max(18, Math.min(28, Math.min(w, h) * 0.058));
+        if (snap.x0) {
+          /* The stem stays vertical � "standing on the spot" is the whole read,
+             and a diagonal leader would lose it. But a peak near the top of the
+             frame put the picture off the top edge, so when there is no room
+             above it stands BELOW instead. Flipping keeps the stem; clamping
+             would have slid the picture down onto the marker. */
+          const up = p[1] - px - 16;
+          const below = up - px / 2 < 6;
+          const sy = below ? p[1] + px + 16 : up;
+          const stemEnd = below ? sy - px / 2 : sy + px / 2;
+          g.strokeStyle = alpha(theme.accent2, .55); g.lineWidth = 1;
+          g.beginPath(); g.moveTo(p[0], stemEnd);
+          g.lineTo(p[0], p[1] + (below ? 4 : -4)); g.stroke();
+          sprite(g, snap.x0, 16, p[0], sy, px);
+          g.strokeStyle = theme.accent2; g.lineWidth = 1.5;
+          g.strokeRect(p[0] - px / 2 - 0.5, sy - px / 2 - 0.5, px + 1, px + 1);
+        }
+        g.fillStyle = alpha(theme.accent2, .18); g.beginPath(); g.arc(p[0], p[1], 11, 0, 7); g.fill();
+        g.fillStyle = theme.accent2; g.beginPath(); g.arc(p[0], p[1], 3.6, 0, 7); g.fill();
+        g.strokeStyle = theme.panel; g.lineWidth = 1;
+        g.beginPath(); g.arc(p[0], p[1], 3.6, 0, 7); g.stroke();
         g.font = '9.5px ui-monospace, monospace';
         g.textAlign = 'left'; g.textBaseline = 'middle';
         g.fillStyle = alpha(theme.accent2, .95);

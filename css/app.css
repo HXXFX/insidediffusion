@@ -1229,7 +1229,24 @@ button, input, select { font: inherit; color: inherit; }
    in a four-way split one is a quarter of the viewport. */
 .hpanel {
   position: absolute; top: 36px; right: 8px; z-index: 8;
-  width: min(360px, calc(100% - 16px)); max-height: calc(100% - 46px);
+  width: min(360px, calc(100% - 16px));
+  /* MEASURED AGAINST THE WINDOW, NOT THE PANE. `calc(100% - 46px)` is 100% of
+     the PANE, and with four views on screen a pane is about 307px tall — so
+     every explanation was squeezed into a 260px scroller regardless of how
+     short the copy was, and the WATCH line, which is the payoff of the card,
+     sat below the fold every time. Nothing about a card's own content could
+     fix that; the container was the limit.
+     The panel is absolutely positioned and its pane does not clip
+     (`overflow: visible`), so it is free to be taller than the pane it belongs
+     to — which is the normal behaviour of a popover anyway.
+
+     55vh, NOT 62. A panel in the BOTTOM row of the grid starts halfway down the
+     window, so the room beneath it is not `100vh` — measured, it is 56-63vh
+     depending on window size, and 62vh ran the Network card off the bottom of a
+     600px-tall window. The exact figure cannot be written in CSS from inside
+     the pane (it depends on the pane's own offset), so this is the worst case
+     rather than a fit. 520px then stops it becoming a slab on a tall screen. */
+  max-height: min(520px, 55vh);
   overflow-y: auto;
   background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
   box-shadow: 0 14px 38px -12px var(--shadow); padding: 14px 16px;
@@ -1249,7 +1266,13 @@ button, input, select { font: inherit; color: inherit; }
      left edge put the cross-attention explanation at the far left of the row,
      hundreds of pixels from the "?" that opened it. */
   position: absolute; inset: auto auto calc(100% - 8px) 14px;
-  width: min(430px, calc(100% - 28px)); max-height: min(300px, 42vh); overflow-y: auto;
+  width: min(430px, calc(100% - 28px));
+  /* Raised from `min(300px, 42vh)` along with the pane cards. Stacking the key
+     rows (see .hkey) trades width for height, so 300px started hiding a third
+     of the cross-attention card behind a scroll. Measured, this panel's bottom
+     edge sits about 68vh down the window, so 52vh cannot push its top off the
+     screen, and 420px stops it overrunning on a tall one. */
+  max-height: min(420px, 52vh); overflow-y: auto;
   background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
   margin: 0; padding: 14px 16px; box-shadow: 0 10px 30px rgba(36,29,26,.14);
 }
@@ -1258,12 +1281,26 @@ button, input, select { font: inherit; color: inherit; }
   text-transform: uppercase; color: var(--accent); font-weight: var(--w-loud);
 }
 .hwhat { margin: 0 0 12px; font-size: var(--fs-body); color: var(--ink); line-height: 1.55; }
-.hkey { margin: 0 0 12px; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
-.hkey dt { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+/* STACKED, NOT TWO COLUMNS, and the reason is that the two-column version had
+   a width nobody controlled. It was `auto 1fr` with `white-space: nowrap` on
+   the term, so the FIRST column sized itself to the longest label and the
+   meaning got whatever was left. In a panel that is at most 430px wide, a
+   label like "Coloured specks on the floor" left about 104px for its
+   explanation — every line wrapped four or five ways, and the Funnel key grew
+   to 800px of content inside a 260px scroller. The panel looked broken and the
+   cause was one long string in the config, which is not a thing anyone editing
+   copy should have to think about.
+   Stacking makes the layout independent of label length: the label takes a
+   line, the meaning takes the full width under it. */
+.hkey { margin: 0 0 12px; display: block; }
+.hkey dt { display: flex; align-items: center; gap: 7px; margin: 9px 0 2px; }
+.hkey dt:first-child { margin-top: 0; }
 .hkey dt b {
   font-weight: var(--w-strong); font-size: var(--fs-small); color: var(--ink);
 }
-.hkey dd { margin: 0; font-size: var(--fs-small); color: var(--ink-3); line-height: 1.5; }
+/* Indented past the swatch (15px) and its gap (7px) so the explanation hangs
+   under the label text rather than under the chip. */
+.hkey dd { margin: 0 0 0 22px; font-size: var(--fs-small); color: var(--ink-3); line-height: 1.5; }
 .hswatch {
   width: 15px; height: 11px; border-radius: 3px; flex: none;
   border: 1px solid var(--line);

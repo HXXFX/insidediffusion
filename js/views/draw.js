@@ -87,6 +87,88 @@ export function groundGrid(g, cam, cx, cy, scale, floor, extent, divisions, opac
 }
 
 /** Draw a 16x16 CHW tensor in [-1,1] into an ImageData-backed canvas. */
+/**
+ * Draw a tensor as a small picture at a point on screen.
+ *
+ * WHY EVERY VIEW NOW DOES THIS. Towers was the view people connected with, and
+ * the reason is not its geometry — it is that Towers colours each column by
+ * `x0`, the model's current guess at the finished picture. The monster is
+ * visibly IN the visualisation, so the link between "this abstract thing" and
+ * "the picture I asked for" needs no explaining.
+ *
+ * The other three showed the same state as a dot, a marker and a row of grey
+ * activation tiles, all of which are honest and none of which look like the
+ * thing being made. So each one now carries the actual picture at the point
+ * where it means something: the head of the funnel's trail, the sample marker
+ * on the landscape, the input and output of the network.
+ *
+ * `x0` is a real quantity at every step, not a preview — it is what the model's
+ * current noise prediction implies the finished picture is, and watching it go
+ * from a smear to a monster IS the process. Nothing here is a decoration
+ * pasted over the data.
+ *
+ * One offscreen canvas per size, cached: this runs in every view on every
+ * frame, and allocating a canvas per call is the kind of per-frame garbage that
+ * shows up as jitter rather than as a number.
+ */
+const spriteCanvas = new Map();
+
+export function sprite(g, data, size, cx, cy, px, gain = 0.5, bias = 0.5) {
+  if (!data) return;
+  let off = spriteCanvas.get(size);
+  if (!off) {
+    off = document.createElement('canvas');
+    off.width = off.height = size;
+    spriteCanvas.set(size, off);
+  }
+  const og = off.getContext('2d');
+  og.putImageData(tensorToImageData(og, data, size, gain, bias), 0, 0);
+  const half = px / 2;
+  g.save();
+  // Nearest-neighbour, or a 16px picture blown up to 40 is a coloured blur and
+  // the whole point — that this is the monster — is lost.
+  g.imageSmoothingEnabled = false;
+  g.drawImage(off, cx - half, cy - half, px, px);
+  g.restore();
+}
+
+/**
+ * Where to hang a sprite so it sits BESIDE a point and never on top of it.
+ *
+ * The first version offset up-and-right by a fixed amount and clamped each
+ * axis into the pane. That reads correctly almost everywhere and fails exactly
+ * in the corners: with the point at the top right BOTH clamps fire, the offset
+ * is undone, and the sprite lands back on the thing it is labelling — the very
+ * bug it was added to fix, just moved somewhere harder to notice. Measured at
+ * 752x307 the gap fell from 38px to 6.7px.
+ *
+ * So try the four diagonals and take the first that fits whole. Only if none
+ * fits does it clamp, and then it keeps the candidate that ends up FURTHEST
+ * from the point rather than whichever was tried first.
+ *
+ * @returns [x, y] centre for the sprite
+ */
+export function labelSpot(x, y, px, w, h, pad = 6) {
+  const half = px / 2;
+  const gap = px * 0.72 + 12;
+  // Up-and-right first: it is clear of the caption (bottom right) and of the
+  // axis legend (left), so it is the direction that fits in the common case.
+  const dirs = [[1, -1], [-1, -1], [1, 1], [-1, 1]];
+  for (const [dx, dy] of dirs) {
+    const sx = x + dx * gap, sy = y + dy * gap;
+    if (sx - half >= pad && sx + half <= w - pad &&
+        sy - half >= pad && sy + half <= h - pad) return [sx, sy];
+  }
+  let best = null;
+  for (const [dx, dy] of dirs) {
+    const sx = Math.min(w - half - pad, Math.max(half + pad, x + dx * gap));
+    const sy = Math.min(h - half - pad, Math.max(half + pad, y + dy * gap));
+    const d = Math.hypot(sx - x, sy - y);
+    if (!best || d > best[2]) best = [sx, sy, d];
+  }
+  return [best[0], best[1]];
+}
+
 export function tensorToImageData(g, data, size, gain = 0.5, bias = 0.5) {
   const img = g.createImageData(size, size);
   const plane = size * size;

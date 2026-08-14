@@ -16,7 +16,7 @@ import { PromptBuilder } from './ui/builder.js';
 import { attachPaneHelp, helpBody } from './ui/help.js';
 import { StepStrip, AttentionPanel, SchedulePanel } from './ui/panels.js';
 import { makeCamera, attachCamera } from './views/camera.js';
-import { loadProjection } from './views/projection.js';
+import { loadProjection, loadCloudPictures } from './views/projection.js';
 import { loadIndex } from './nn/weights.js';
 import { Grammar } from './prompt.js';
 import { loadDemo } from './demo.js';
@@ -60,6 +60,8 @@ const state = {
 };
 const panes = new Map();
 let controls, strip, attention, schedule, worker, projector, wordlist, builder;
+/** Filled in after boot; see the loadCloudPictures call below. */
+const cloudPics = { data: null };
 let replay = null, logview = null, splitter = null, stepDemo = null;
 
 // --------------------------------------------------------------- boot
@@ -113,10 +115,20 @@ async function boot() {
   projector = await loadProjection('./weights/');
   log.end('proj', `projection loaded — ${projector.cloudN} points, ${projector.k} components`);
 
+  /* A HOLDER, not the value, because the value is not here yet and boot must
+     not wait for it. The views keep this object and read `.data` each frame:
+     null means "draw plain marks", and the frame after the fetch lands they
+     upgrade themselves with no reload and no re-create. Deliberately not
+     awaited, and a failure leaves `.data` null rather than throwing — the
+     pictures are an enrichment of the views, never a requirement of them. */
   for (const v of VIEWS) {
     const mod = MODULES[v.id];
-    panes.get(v.id).renderer = mod.create({ projector, imgSize: 16 });
+    panes.get(v.id).renderer = mod.create({ projector, imgSize: 16, cloudPics });
   }
+  loadCloudPictures('./weights/').then((p) => {
+    cloudPics.data = p;
+    if (p) log.info(`${p.n} training pictures loaded for the floor and the map`);
+  });
 
   startWorker(controls.get('model'));
   requestAnimationFrame(frame);

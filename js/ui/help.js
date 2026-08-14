@@ -31,6 +31,15 @@ const SWATCH = () => ({
   axis: `repeating-linear-gradient(90deg,${theme.ink3} 0 3px,transparent 3px 6px)`,
   dash: `repeating-linear-gradient(90deg,${theme.ink3} 0 3px,transparent 3px 6px)`,
   tok: theme.line,
+  /* Stands for "a small picture of a monster", which several keys now need:
+     the views draw real training images, and a flat chip in one colour would
+     say "a coloured thing" about something whose whole point is that it is a
+     PICTURE. Hard steps rather than a smooth blend — a gradient reads as a
+     range, and this is not a range, it is a few pixels side by side. The stops
+     are theme tokens, so like every other swatch it cannot drift away from a
+     colour the app has stopped using. */
+  pic: `linear-gradient(90deg,${theme.accent2} 0 25%,${theme.accent} 25% 50%,`
+    + `${theme.ink2} 50% 75%,${fade(theme.accent, .45)} 75%)`,
 });
 
 function swatch(spec) {

@@ -14,7 +14,7 @@
 
 
 import { theme, alpha, fade } from '../theme.js';
-import { fit, caption, note } from './draw.js';
+import { fit, caption, note, sprite } from './draw.js';
 
 export const id = 'network';
 export const label = 'Network';
@@ -33,6 +33,19 @@ const BLOCKS = [
 export function create() {
   const tile = document.createElement('canvas');
   const tg = tile.getContext('2d');
+
+  /* ONE PULSE PER FORWARD PASS.
+     The diagram was static: six boxes and some lines, identical whether the
+     model was running or finished, so nothing about it said "data is moving
+     through this". A free-running animation would have fixed the look and lied
+     — it would imply per-layer timing the app does not measure.
+     This fires once per NEW SNAPSHOT instead. A snapshot means a forward pass
+     genuinely happened, so one pulse is one pass, and the ORDER it travels
+     (encoder, bottleneck, decoder) is the real order. It claims nothing about
+     duration; scrubbing or pausing produces no pulse because no pass occurred. */
+  let lastCount = -1;
+  let pulseAt = -1e9;
+  const PULSE_MS = 620;
 
   return {
     draw(canvas, cam, snaps, i) {
@@ -158,6 +171,91 @@ export function create() {
       g.beginPath(); g.moveTo(M - bw / 2 - 6, ty); g.lineTo(M - bw / 2, ty); g.stroke();
       g.setLineDash([]);
 
+      /* WHAT GOES IN AND WHAT COMES OUT, WIRED INTO THE GRAPH.
+         These first sat at the pane's edges, outside the pan/zoom transform, on
+         the reasoning that they label the diagram rather than belong to it. In
+         practice they read as two pictures parked beside a graph they had
+         nothing to do with. They are the graph's first input and its last
+         output, so they are drawn INSIDE the transform, adjacent to the blocks
+         they feed and come from, with an arrow each. They pan and zoom with
+         everything else because they are part of it. */
+      const cur = snaps[Math.min(i, snaps.length - 1)];
+      if (cur && cur.x && cur.x0) {
+        const ep = Math.min(bh * 1.5, bw * 0.42);
+        const arrow = (x1, x2, y) => {
+          g.strokeStyle = alpha(theme.ink, .3); g.lineWidth = 1;
+          g.beginPath(); g.moveTo(x1, y); g.lineTo(x2, y); g.stroke();
+          const d = Math.sign(x2 - x1) * 4;
+          g.beginPath(); g.moveTo(x2, y); g.lineTo(x2 - d, y - 3);
+          g.lineTo(x2 - d, y + 3); g.closePath();
+          g.fillStyle = alpha(theme.ink, .3); g.fill();
+        };
+        const end = (data, sx, sy, label, col) => {
+          sprite(g, data, 16, sx, sy, ep);
+          g.strokeStyle = col; g.lineWidth = 1.5;
+          g.strokeRect(sx - ep / 2 - 0.5, sy - ep / 2 - 0.5, ep + 1, ep + 1);
+          g.fillStyle = alpha(theme.ink3, .95);
+          g.font = '9px ui-monospace, monospace';
+          g.textAlign = 'center'; g.textBaseline = 'top';
+          g.fillText(label, sx, sy + ep / 2 + 4);
+        };
+        const inX = Math.max(ep / 2 + 2, L - bw / 2 - ep / 2 - 14);
+        const outX = Math.min(w - ep / 2 - 2, R + bw / 2 + ep / 2 + 14);
+        end(cur.x, inX, rowY(0), 'goes in', alpha(theme.ink, .35));
+        arrow(inX + ep / 2 + 3, L - bw / 2 - 2, rowY(0));
+        end(cur.x0, outX, rowY(0), 'comes out', theme.accent);
+        arrow(R + bw / 2 + 2, outX - ep / 2 - 3, rowY(0));
+      }
+
+      /* THE PULSE — see the note at the top of create(). */
+      const reduce = window.matchMedia
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      /* Keyed on the NUMBER OF SNAPSHOTS, not on the index being displayed.
+         Keyed on the index it also fired while scrubbing, which is a lie: no
+         forward pass happens when you drag the slider over steps that already
+         ran. Snapshot count only goes up when the worker has actually completed
+         a pass. */
+      if (snaps.length !== lastCount) {
+        // Not on the first fill after a load, or replaying a saved run would
+        // announce 30 passes that are not happening now.
+        if (lastCount >= 0 && snaps.length === lastCount + 1) pulseAt = performance.now();
+        lastCount = snaps.length;
+      }
+      const age = (performance.now() - pulseAt) / PULSE_MS;
+      if (!reduce && age >= 0 && age <= 1) {
+        // The real order data reaches the blocks, as a polyline.
+        const path = [
+          [L, rowY(0)], [L, rowY(1)], [L, rowY(2)],
+          [M, rowY(3)], [R, rowY(1)], [R, rowY(0)],
+        ];
+        let total = 0;
+        const seg = [];
+        for (let n = 1; n < path.length; n++) {
+          const d = Math.hypot(path[n][0] - path[n - 1][0], path[n][1] - path[n - 1][1]);
+          seg.push(d); total += d;
+        }
+        // Ease out: a linear pulse reads as mechanical, and the interesting
+        // part is the start of the pass rather than its tail.
+        const at = (1 - Math.pow(1 - age, 2)) * total;
+        let acc = 0, px = path[0][0], py = path[0][1];
+        for (let n = 0; n < seg.length; n++) {
+          if (at <= acc + seg[n] || n === seg.length - 1) {
+            const f = Math.max(0, Math.min(1, (at - acc) / (seg[n] || 1)));
+            px = path[n][0] + (path[n + 1][0] - path[n][0]) * f;
+            py = path[n][1] + (path[n + 1][1] - path[n][1]) * f;
+            break;
+          }
+          acc += seg[n];
+        }
+        const fade0 = 1 - age;
+        g.fillStyle = alpha(theme.accent2, 0.16 * fade0);
+        g.beginPath(); g.arc(px, py, 13, 0, 7); g.fill();
+        g.fillStyle = alpha(theme.accent2, 0.9 * fade0);
+        g.beginPath(); g.arc(px, py, 4.2, 0, 7); g.fill();
+      }
+
+      // Everything above belongs to the diagram and moves with it; everything
+      // below labels the pane and must not.
       g.restore();
 
       note(canvas, act ? 'Tiles are the real numbers, live.'
