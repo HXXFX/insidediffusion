@@ -929,6 +929,14 @@ button, input, select { font: inherit; color: inherit; }
 
 /* Pinned to the foot of the tab: it drives acts 2 and 3 at once, so it must
    stay reachable however far down the page you have scrolled. */
+/* The transport's STICKY RANGE is this box, not the tab.
+   `.train2d` is the scroll container, so a sticky child of it sticks for the
+   whole tab — which is what act 4 exposed: a control driving nothing on screen
+   still floating over the section it does not touch. Wrapping acts 2 and 3
+   makes the wrapper the sticky element's containing block, so it stops exactly
+   where its subject stops. A plain block, and `flex: none` because the parent
+   is a flex column and these must size to their content. */
+.t2d-runwrap { display: block; flex: none; }
 .t2d-scrub {
   position: sticky; bottom: 0; z-index: 4;
   display: flex; align-items: center; gap: 14px; flex: none;
@@ -1196,11 +1204,26 @@ button, input, select { font: inherit; color: inherit; }
    in a two-column split there is one starting at the horizontal midpoint —
    directly under a centred hint. Centring alone collides; centring plus
    clearing the caption band (`bottom: 9px` plus its own line) does not. */
+/* IN THE APP-CHROME CORNER, under the view switch — not floating over a pane.
+   Centred at the bottom it sat straight across the bottom-row panes' own name
+   and caption ("NETWORK The model your picture...", "Tiles are the real
+   numbers"), and nudging `bottom` cannot fix that: in a 2x2 grid EVERY
+   horizontal band at the foot of the viewport is some pane's label band, and
+   the viewport's horizontal centre is the seam where one pane's caption meets
+   the next pane's label — the worst column available. Giving it a plate made
+   it legible on top of that text, which is not the same as not covering it.
+   The corner allocation already had an answer: top left is app chrome, top
+   right is the pane's `?`, bottom left the label, bottom right the readouts.
+   This is app chrome — it describes the viewport, not any one pane — so it
+   belongs under the view switch, where no pane draws by construction.
+   The plate stays: it is over a canvas either way. */
 .hint {
-  position: absolute; left: 50%; transform: translateX(-50%);
-  bottom: 30px; z-index: 5;
-  margin: 0; font-size: var(--fs-label); color: var(--ink-3);
+  position: absolute; left: 10px; top: 50px; z-index: 6;
+  margin: 0; font-size: var(--fs-label); color: var(--ink-2);
   pointer-events: none; white-space: nowrap;
+  background: rgba(255,253,250,.72); backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid rgba(195,177,160,.34); border-radius: 8px;
+  padding: 5px 11px;
   opacity: 0; transition: opacity .18s ease;
 }
 .hint.on { opacity: 1; }
@@ -1492,4 +1515,66 @@ button, input, select { font: inherit; color: inherit; }
   .side { border-right: none; border-bottom: 1px solid var(--line); }
   .panel.two { grid-template-columns: 1fr; }
   body { overflow: auto; }
+}
+
+/* ── Act 4: the withheld combinations ──────────────────────────────────────
+   The row is the argument, so it is built as one: two pictures the model saw,
+   then the one it never saw, then what it drew. The gap before "never in
+   training" is real space, not a border — a rule there reads as a table
+   column boundary, and this is a sequence, not a table. */
+/* `.t2d-claim`, NOT `.t2d-verdict` — that class already existed on the live
+   score line in act 1, and reusing it silently restyled a panel three
+   sections away. Nothing errors; the other element just quietly moves. */
+.t2d-holdout, .t2d-claim { margin-top: 12px; }
+.ho-rows { display: grid; gap: 14px; }
+.ho-row {
+  display: grid; gap: 7px;
+  padding-bottom: 13px; border-bottom: 1px solid var(--line-soft);
+}
+.ho-rows .ho-row:last-child { padding-bottom: 0; border-bottom: none; }
+.ho-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ho-head b { font-size: var(--fs-body); color: var(--ink); font-weight: var(--w-strong); }
+.ho-head span { font-size: var(--fs-small); color: var(--ink-3); }
+.ho-strip { display: flex; align-items: flex-start; gap: 9px; flex-wrap: wrap; }
+.ho-tile { margin: 0; display: grid; gap: 4px; justify-items: center; width: 74px; }
+/* Nearest-neighbour, or a 16px picture blown up to 56 is a coloured blur and
+   the comparison the row exists for cannot be made. */
+.ho-pic {
+  width: 56px; height: 56px; image-rendering: pixelated;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--view-bg);
+}
+.ho-tile figcaption {
+  font-size: var(--fs-micro); line-height: 1.35; color: var(--ink-3);
+  text-align: center;
+}
+/* The withheld one is the hinge of the row and is marked as absent, not as
+   another example: dashed, because that is what "this was not there" looks
+   like everywhere else in software. */
+.ho-tile.never { margin-left: 15px; }
+/* NOT faded. It was drawn at 62% to say "this was absent", which fought the
+   row's whole purpose: this is the tile the reader compares "what it drew"
+   against, and dimming one side of a comparison makes it harder to judge. The
+   dashed amber border already says absent, and it says it without touching the
+   pixels being compared. */
+.ho-tile.never .ho-pic { border: 1px dashed var(--accent-2); }
+.ho-tile.never figcaption { color: var(--accent-2); }
+.ho-tile.drew .ho-pic { border: 1.5px solid var(--accent-2); }
+.ho-tile.drew figcaption { color: var(--ink-2); font-weight: var(--w-strong); }
+
+/* A bar, because the raw error is meaningless to a reader and its POSITION
+   between two named ends is not. Track runs from "as good as a trained prompt"
+   to "no better than an unrelated picture". */
+.ho-meter { display: flex; align-items: center; gap: 10px; }
+.ho-meter i {
+  display: block; height: 6px; border-radius: 3px;
+  background: var(--accent-2); flex: none; min-width: 3px;
+  max-width: 180px;
+}
+.ho-meter span { font-size: var(--fs-small); color: var(--ink-3); }
+.ho-scale, .ho-verdict, .ho-caveat {
+  margin: 12px 0 0; font-size: var(--fs-small); line-height: 1.6; color: var(--ink-3);
+}
+.ho-verdict { color: var(--ink-2); }
+.ho-caveat {
+  margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line-soft);
 }

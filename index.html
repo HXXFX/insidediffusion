@@ -55,10 +55,12 @@
   <div class="viewport">
     <div class="vswitch" id="viewSwitch" role="group" aria-label="Views"></div>
 
-    <!-- "Rotate" was a lie in one pane: the Network is a flat diagram and
-         drags pan it instead. One hint covers all four panes, so it names the
-         gesture rather than the effect. -->
-    <p class="hint" id="hint">Drag to move · wheel to zoom · double-click to reset</p>
+    <!-- "Rotate" was a lie in one pane: the Network is a flat diagram and a
+         left drag pans it instead. One hint covers all four panes, so the left
+         drag is named by its gesture rather than its effect. Right-drag and
+         wheel mean the same thing everywhere, so those can be named exactly. -->
+    <p class="hint" id="hint">Drag to move · right-drag to pan · wheel to zoom ·
+      double-click to reset</p>
     <div class="viewgrid" id="viewGrid" data-n="2"></div>
 
     <!-- The training mode replaces the view grid rather than joining it: it is
@@ -175,6 +177,16 @@
       </section>
 
       <!-- =================================================== ACT 2: the run -->
+      <!-- ACTS 2 AND 3 SHARE A TRANSPORT, so they share a wrapper, and the
+           transport sticks to the bottom of the WRAPPER rather than to the
+           window. It used to be pinned to the viewport for the whole tab, which
+           was right when the tab ended at act 3 and became wrong the moment act
+           4 was added: a control that drives nothing on screen, following you
+           down a section it has no effect on, reads as broken.
+           `position: sticky; bottom: 0` needs no scroll listener and no
+           measurement — it is visible for exactly as long as the thing it
+           operates is. -->
+      <div class="t2d-runwrap">
       <section class="t2d-act" id="actRun">
         <header class="t2d-acthead">
           <span class="t2d-num">2</span>
@@ -229,11 +241,7 @@
         </div>
       </section>
 
-      <!-- ONE TRANSPORT for the whole tab, pinned to the bottom. It drives the
-           position in the run, and acts 2 and 3 both read that position — the
-           sprites and the marker on the curve are two views of one number, so
-           there is one control rather than one each.
-           A scrubber alone made this a slideshow you had to operate. Play runs
+      <!-- A scrubber alone made this a slideshow you had to operate. Play runs
            the 30,000 steps as an animation, which is the thing worth watching;
            the slider is for going back to a moment you noticed. -->
       <div class="t2d-scrub">
@@ -242,6 +250,52 @@
         <input type="range" id="trainScrub" min="0" max="1" value="0" aria-label="Training step">
         <span class="t" id="trainEnd">step —</span>
       </div>
+      </div><!-- /t2d-runwrap -->
+
+      <!-- ============================= ACT 4: the thing it was never shown -->
+      <!-- LAST ON PURPOSE. It only means something once you have seen what a
+           training step is (act 1) and what training produced (act 2), because
+           the whole claim rests on knowing what WAS in the data. Put earlier it
+           is a magic trick; put here it is a measurement.
+           Every number in this section comes from weights/holdout.json, written
+           by train/holdout_test.py from a second model trained for this and
+           nothing else. Nothing here is typed in by hand. -->
+      <section class="t2d-act" id="actNew">
+        <header class="t2d-acthead">
+          <span class="t2d-num">4</span>
+          <div>
+            <h3>Can it draw what it never saw?</h3>
+            <p class="t2d-lead">A second model was trained from scratch with
+              some combinations removed — every green thing and every ghost, but
+              never a green ghost. Then it was asked for one. Because the data is
+              generated rather than collected, the right answer still exists for
+              a picture the model has never met, so its attempt can be scored
+              exactly like everything else.</p>
+          </div>
+        </header>
+
+        <div class="t2d-panel t2d-holdout">
+          <h5>What it saw, what it never saw, what it drew</h5>
+          <div class="ho-rows" id="hoRows"></div>
+          <p class="ho-scale" id="hoScale"></p>
+        </div>
+
+        <div class="t2d-panel t2d-claim">
+          <h5>What this does and does not show</h5>
+          <p class="ho-verdict" id="hoVerdict"></p>
+          <!-- The honesty note is markup, not script: it is the one part of
+               this section that must appear even if the fetch fails, because
+               without it a reader can leave with the wrong conclusion. -->
+          <p class="ho-caveat">Drawing a green ghost is not invention — it is
+            recombination, and the purest possible demonstration of it. What it
+            rules out is narrower and worth stating plainly: that the model can
+            only return pictures it was shown. This one returns a picture nobody
+            ever gave it. Whether it could invent a feature outside its six
+            words is a different question, and nothing here can test it, because
+            those six words are all it can be asked for.</p>
+        </div>
+      </section>
+
     </div>
 
     <div class="overlay" id="overlay">

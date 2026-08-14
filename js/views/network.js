@@ -87,9 +87,32 @@ export function create() {
       const spacing = (availH - bh) / (ROWS - 1);
       const rowY = (i) => TOP_STRIP + bh / 2 + i * spacing;
 
-      const bw = Math.min(138, w * 0.26);
-      const L = Math.max(bw / 2 + 8, w * 0.25);
-      const R = Math.min(w - bw / 2 - 8, w * 0.75);
+      /* EACH BOX IS AS WIDE AS ITS OWN LABEL.
+         One shared width meant the shortest label and the longest one got the
+         same box: `4² × 96` sat in a box half full of nothing, while
+         `4² × 96 + attention` — half again as long — got exactly the same room
+         and looked cramped in it. Measuring the text is the whole fix, and it
+         has to happen AFTER the font is set or measureText reports the default
+         font's metrics.
+         The tile, when a block is live, is drawn inside the box at `bh` square,
+         so it is part of the width rather than something the padding has to
+         absorb. */
+      g.font = '10px ui-monospace, monospace';
+      const PAD = 10;
+      const widths = new Map();
+      for (const b of BLOCKS) {
+        const lead = (act && act[b.key]) ? bh + 2 : PAD;
+        widths.set(b.key, Math.min(w * 0.44,
+          lead + g.measureText(b.label).width + PAD));
+      }
+      const BW = (k) => widths.get(k);
+      // The columns are set by the WIDEST box in each, so no box in a column
+      // hangs past the one above it.
+      const wEnc = Math.max(BW('enc16'), BW('enc8'), BW('enc4'));
+      const wDec = Math.max(BW('dec16'), BW('dec8'));
+      const wMid = BW('mid');
+      const L = Math.max(wEnc / 2 + 8, w * 0.25);
+      const R = Math.min(w - wDec / 2 - 8, w * 0.75);
       const M = w * 0.5;
       const xy = (b) => ({
         x: b.side === 'enc' ? L : b.side === 'dec' ? R : M,
@@ -105,16 +128,17 @@ export function create() {
         g.setLineDash([]);
       };
       for (let n = 0; n < 2; n++) line(L, rowY(n) + bh / 2, L, rowY(n + 1) - bh / 2);
-      line(L, rowY(2) + bh / 2, M - bw / 2, rowY(3));
-      line(M + bw / 2, rowY(3), R, rowY(1) + bh / 2);
+      line(L, rowY(2) + bh / 2, M - wMid / 2, rowY(3));
+      line(M + wMid / 2, rowY(3), R, rowY(1) + bh / 2);
       line(R, rowY(1) - bh / 2, R, rowY(0) + bh / 2);
-      // skips
-      line(L + bw / 2, rowY(0), R - bw / 2, rowY(0), true);
-      line(L + bw / 2, rowY(1), R - bw / 2, rowY(1), true);
+      // Skips start and end at the EDGE of the specific boxes they join, which
+      // is why these read per-block rather than from one shared width.
+      line(L + BW('enc16') / 2, rowY(0), R - BW('dec16') / 2, rowY(0), true);
+      line(L + BW('enc8') / 2, rowY(1), R - BW('dec8') / 2, rowY(1), true);
 
-      g.font = '10px ui-monospace, monospace';
       for (const b of BLOCKS) {
         const { x, y } = xy(b);
+        const bw = BW(b.key);
         const a = act ? act[b.key] : null;
         const hot = !!a;
         g.fillStyle = hot ? alpha(theme.accent, .14) : alpha(theme.ink, .04);
@@ -165,10 +189,10 @@ export function create() {
       g.textBaseline = 'middle';
       g.fillStyle = alpha(theme.accent2, .85);
       g.font = '9.5px ui-monospace, monospace';
-      g.fillText('prompt →', M - bw / 2 - 8, ty);
+      g.fillText('prompt →', M - wMid / 2 - 8, ty);
       g.strokeStyle = alpha(theme.accent2, .32);
       g.setLineDash([3, 3]);
-      g.beginPath(); g.moveTo(M - bw / 2 - 6, ty); g.lineTo(M - bw / 2, ty); g.stroke();
+      g.beginPath(); g.moveTo(M - wMid / 2 - 6, ty); g.lineTo(M - wMid / 2, ty); g.stroke();
       g.setLineDash([]);
 
       /* WHAT GOES IN AND WHAT COMES OUT, WIRED INTO THE GRAPH.
@@ -181,7 +205,7 @@ export function create() {
          everything else because they are part of it. */
       const cur = snaps[Math.min(i, snaps.length - 1)];
       if (cur && cur.x && cur.x0) {
-        const ep = Math.min(bh * 1.5, bw * 0.42);
+        const ep = Math.min(bh * 1.5, wEnc * 0.42);
         const arrow = (x1, x2, y) => {
           g.strokeStyle = alpha(theme.ink, .3); g.lineWidth = 1;
           g.beginPath(); g.moveTo(x1, y); g.lineTo(x2, y); g.stroke();
@@ -199,12 +223,12 @@ export function create() {
           g.textAlign = 'center'; g.textBaseline = 'top';
           g.fillText(label, sx, sy + ep / 2 + 4);
         };
-        const inX = Math.max(ep / 2 + 2, L - bw / 2 - ep / 2 - 14);
-        const outX = Math.min(w - ep / 2 - 2, R + bw / 2 + ep / 2 + 14);
+        const inX = Math.max(ep / 2 + 2, L - BW('enc16') / 2 - ep / 2 - 14);
+        const outX = Math.min(w - ep / 2 - 2, R + BW('dec16') / 2 + ep / 2 + 14);
         end(cur.x, inX, rowY(0), 'goes in', alpha(theme.ink, .35));
-        arrow(inX + ep / 2 + 3, L - bw / 2 - 2, rowY(0));
+        arrow(inX + ep / 2 + 3, L - BW('enc16') / 2 - 2, rowY(0));
         end(cur.x0, outX, rowY(0), 'comes out', theme.accent);
-        arrow(R + bw / 2 + 2, outX - ep / 2 - 3, rowY(0));
+        arrow(R + BW('dec16') / 2 + 2, outX - ep / 2 - 3, rowY(0));
       }
 
       /* THE PULSE — see the note at the top of create(). */

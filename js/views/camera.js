@@ -38,13 +38,18 @@ export class Camera {
   }
 
   /**
-   * Pan, in CSS pixels. Only the flat view uses it.
+   * Pan, in CSS pixels. Used by every view now, not just the flat one.
    *
-   * A 2-D diagram cannot be orbited — rotating a computation graph means
-   * nothing — but it very much can be too small to read in a quarter-pane, so
-   * it needs the other half of the gesture set. Keeping the offset on the
-   * camera rather than in the view means it survives the same reset and the
-   * same double-click as everything else.
+   * The flat diagram needed it first — it cannot be orbited, but it very much
+   * can be too small to read in a quarter-pane. The 3-D views need it for a
+   * different reason: orbit and zoom together cannot put an off-centre feature
+   * in the middle of the pane, so anything the projection puts near an edge is
+   * unreachable without it.
+   *
+   * Keeping the offset on the camera rather than in the view means it survives
+   * the same reset and the same double-click as everything else. The flat view
+   * applies it itself through a canvas transform; the 3-D views get it from
+   * `project()` below, so neither applies it twice.
    */
   pan(dx, dy) { this.panX += dx; this.panY += dy; }
 
@@ -97,8 +102,12 @@ export class Camera {
     const z2 = -y * this.sp + z1 * this.cp;
     const d = z2 + this.dist;
     const f = (2.6 / Math.max(0.15, d)) * scale;
-    if (out) { out[0] = cx + x1 * f; out[1] = cyc - y2 * f; out[2] = d; return out; }
-    return [cx + x1 * f, cyc - y2 * f, d];
+    // Pan is added in SCREEN space, after projection, so it slides the finished
+    // picture rather than moving the camera through the scene — a world-space
+    // translation would change the perspective and the depth sort with it.
+    const px = this.panX, py = this.panY;
+    if (out) { out[0] = cx + x1 * f + px; out[1] = cyc - y2 * f + py; out[2] = d; return out; }
+    return [cx + x1 * f + px, cyc - y2 * f + py, d];
   }
 
   get pitchDegrees() { return Math.round((this.pitch * 180) / Math.PI); }
@@ -115,11 +124,22 @@ export class Camera {
 export function attachCamera(canvas, camera, onChange, { flat = false } = {}) {
   let drag = null;
 
+  /* WHICH BUTTON DOES WHAT, and why it is read at pointerdown.
+     Left drag is the view's primary gesture — orbit in 3-D, pan in the flat
+     diagram. RIGHT drag always pans, in every view, which is the convention
+     every 3-D tool uses and the only way to bring an off-centre feature to the
+     middle of a pane.
+     `e.button` is only meaningful on the down event; `pointermove` reports a
+     BITMASK in `e.buttons` and 0 in `e.button`, so deciding the mode per move
+     event reads the wrong field and every drag behaves like a left drag. */
   canvas.addEventListener('pointerdown', (e) => {
-    drag = { x: e.clientX, y: e.clientY };
+    drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 };
     canvas.setPointerCapture(e.pointerId);
-    canvas.style.cursor = 'grabbing';
+    canvas.style.cursor = drag.pan ? 'move' : 'grabbing';
   });
+  // Without this a right-drag ends on the browser's own menu, which also
+  // swallows the pointerup and leaves the canvas stuck mid-drag.
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   const end = (e) => {
     drag = null;
     canvas.style.cursor = 'grab';
@@ -132,10 +152,11 @@ export function attachCamera(canvas, camera, onChange, { flat = false } = {}) {
 
   canvas.addEventListener('pointermove', (e) => {
     if (!drag) return;
-    if (flat) {
+    if (flat || drag.pan) {
       // A flat view has nothing to orbit, so the same drag moves the diagram
       // under the window instead — one to one with the pointer, because
-      // anything else feels like the content is sliding away from you.
+      // anything else feels like the content is sliding away from you. A right
+      // drag does the same thing in a 3-D view.
       camera.pan(e.clientX - drag.x, e.clientY - drag.y);
     } else {
       // Drag DOWN raises the camera, which is the direction every 3-D tool

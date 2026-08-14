@@ -22,6 +22,7 @@ import { Grammar } from './prompt.js';
 import { loadDemo } from './demo.js';
 import { TrainingReplay } from './training/replay.js';
 import { TrainingStep } from './training/step.js';
+import { HoldoutPanel } from './training/holdout.js';
 import { log, captureErrors } from './log.js';
 import { LogView } from './ui/logview.js';
 import { hoverPop, clickPop, hoverClickPop, installDismiss } from './ui/popover.js';
@@ -60,6 +61,7 @@ const state = {
 };
 const panes = new Map();
 let controls, strip, attention, schedule, worker, projector, wordlist, builder;
+let holdoutPanel;
 /** Filled in after boot; see the loadCloudPictures call below. */
 const cloudPics = { data: null };
 let replay = null, logview = null, splitter = null, stepDemo = null;
@@ -282,18 +284,30 @@ async function buildBrand() {
  * `classList.toggle(name, bool)` no-ops when the answer has not changed, so
  * ordinary movement across the middle of the viewport touches no styles.
  */
-const HINT_ZONE = 90;      // px above the bottom edge that counts as "near"
+const HINT_MS = 2600;      // how long it stays after the pointer arrives
 
 function wireHint() {
   const port = $('.viewport');
   const hint = $('#hint');
-  port.addEventListener('pointermove', (e) => {
-    const r = port.getBoundingClientRect();
-    hint.classList.toggle('on', r.bottom - e.clientY < HINT_ZONE);
-  }, { passive: true });
-  // Without this, leaving past the bottom edge strands it visible: no further
-  // pointermove arrives to turn it off.
-  port.addEventListener('pointerleave', () => hint.classList.remove('on'));
+  let timer = 0;
+  /* ON ARRIVAL, THEN AWAY — not on proximity to an edge.
+     The proximity version keyed on the BOTTOM of the viewport, because that is
+     where the hint used to sit. Now that it lives in the top-left chrome
+     corner, "hover near the bottom, text appears at the top" would be a
+     puzzle, and a zone near the top would fight the view switch.
+     Arriving in the viewport is the moment the hint is for: you are about to
+     drag something. It says how, then gets out of the way on its own. */
+  port.addEventListener('pointerenter', () => {
+    hint.classList.add('on');
+    clearTimeout(timer);
+    timer = setTimeout(() => hint.classList.remove('on'), HINT_MS);
+  });
+  // Leaving hides it at once, and cancels the timer — otherwise a re-entry
+  // inside the window inherits the old countdown and flashes.
+  port.addEventListener('pointerleave', () => {
+    clearTimeout(timer);
+    hint.classList.remove('on');
+  });
 }
 
 /** The finished picture, drawn big enough to be found. */
@@ -364,6 +378,29 @@ function applyMode(id) {
 }
 
 /**
+ * Act 4, the withheld combinations.
+ *
+ * Its own loader for the same reason the replay has one: 28 kB nobody browsing
+ * the Make tab ever needs. It is also the only section whose data is a RESULT
+ * rather than a recording, so a failure to load must not take the rest of the
+ * tab with it — the section's honesty note is in the markup and survives, and
+ * the panel simply says the measurement is unavailable.
+ */
+function startHoldout() {
+  if (holdoutPanel) return;
+  holdoutPanel = new HoldoutPanel({
+    rows: $('#hoRows'), scale: $('#hoScale'), verdict: $('#hoVerdict'),
+  });
+  holdoutPanel.load('./weights/')
+    .then(() => { holdoutPanel.build(); log.info('held-out results loaded'); })
+    .catch((e) => {
+      $('#hoVerdict').textContent =
+        'The measurement could not be loaded, so nothing is claimed here.';
+      log.warn(`held-out results unavailable — ${e.message}`);
+    });
+}
+
+/**
  * Load and show the real run's history for whichever model is selected.
  *
  * Lazily, and once: it is ~200 kB per model and most visits never open this
@@ -396,6 +433,7 @@ async function startTraining() {
   // loaded model's manifest rather than keeping a second copy.
   replay.manifest = state.manifest;
 
+  startHoldout();
   startStepDemo();
 
   if (replay.loaded === run) { replay.setIndex(replay.at); return; }
