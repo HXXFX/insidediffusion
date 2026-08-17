@@ -264,7 +264,16 @@ export function create(ctx) {
       g.fillText('noise', Math.max(6, q[0] - 34), q[1] - 8);
       g.fillText('clean', Math.max(6, p[0] - 32), p[1] + 9);
 
-      note(canvas, 'The picture is its guess so far; the floor is a PCA shadow.');
+      /* "PCA shadow" was on this line for a while, and it is the kind of label
+         that only reads if you already know the answer. What the floor IS, in
+         words anyone can use: a map where similar training pictures sit near
+         each other. The method that builds the map is a training-time detail;
+         the property that matters for reading the view is nearness. */
+      /* ONE LINE, HARD LIMIT. .pnote is nowrap + ellipsis under a 62% cap, so
+         a note longer than ~52 characters is silently cut mid-sentence at
+         ordinary window sizes — the first wording of this line shipped as
+         "...similar monsters sit…". The budget is part of the sentence. */
+      note(canvas, 'Its guess so far; similar monsters sit close below.');
       const snap = snaps[Math.min(i, snaps.length - 1)];
       caption(g, w, h, snap ? `step ${snap.index + 1} / ${snap.total}` : 'ready',
         `${projector.cloudN} training images`);

@@ -25,7 +25,7 @@ const BLOCKS = [
   { key: 'enc16', label: '16² × 32', col: 0, row: 0, side: 'enc' },
   { key: 'enc8', label: '8² × 64', col: 0, row: 1, side: 'enc' },
   { key: 'enc4', label: '4² × 96', col: 0, row: 2, side: 'enc' },
-  { key: 'mid', label: '4² × 96 + attention', col: 0.5, row: 3, side: 'mid' },
+  { key: 'mid', label: '4² × 96 + attention', col: 0.5, row: 2, side: 'mid' },
   { key: 'dec8', label: '8² × 32', col: 1, row: 1, side: 'dec' },
   { key: 'dec16', label: '16² × 32', col: 1, row: 0, side: 'dec' },
 ];
@@ -34,16 +34,22 @@ export function create() {
   const tile = document.createElement('canvas');
   const tg = tile.getContext('2d');
 
-  /* ONE PULSE PER FORWARD PASS.
+  /* THE SPARK RETRACES THE PASS THAT MADE THE STEP ON SCREEN.
      The diagram was static: six boxes and some lines, identical whether the
      model was running or finished, so nothing about it said "data is moving
      through this". A free-running animation would have fixed the look and lied
      — it would imply per-layer timing the app does not measure.
-     This fires once per NEW SNAPSHOT instead. A snapshot means a forward pass
-     genuinely happened, so one pulse is one pass, and the ORDER it travels
-     (encoder, bottleneck, decoder) is the real order. It claims nothing about
-     duration; scrubbing or pausing produces no pulse because no pass occurred. */
-  let lastCount = -1;
+     It fires when the DISPLAYED step changes. During a live run that is each
+     fresh forward pass as it lands; while scrubbing it replays the recorded
+     pass you have moved to. An earlier version fired only on new snapshots, on
+     the argument that scrubbing runs no pass — which is true and was the wrong
+     conclusion: every step on screen IS the product of a real pass, the tiles
+     are that pass's numbers, and the user reasonably asked why dragging the
+     slider showed no journey. The spark claims "one trip through the network
+     produced what you are looking at", and that claim is true either way.
+     The ORDER it travels (encoder, bottleneck, decoder) is the real order, and
+     it still claims nothing about per-layer timing. */
+  let lastShown = -1;
   let pulseAt = -1e9;
   const PULSE_MS = 620;
 
@@ -79,7 +85,16 @@ export function create() {
        * the one below it. Fixing that alone then pushed the first row up under
        * the view's own note strip. Reserving the strips first and fitting the
        * rows into what is left makes both impossible by construction. */
-      const ROWS = 4;
+      /* THREE ROWS, AND HEIGHT MEANS EXACTLY ONE THING: picture size.
+         Row 0 is 16 px, row 1 is 8, row 2 is 4. The bottleneck used to sit on a
+         fourth row below the 4² encoder box — same tensor size, drawn lower —
+         which quietly broke the one rule that makes this layout readable. Both
+         4² boxes now share the bottom row, so the diagram is the U of U-Net
+         with no exceptions: down the left the picture halves, along the bottom
+         it thinks, up the right it rebuilds. When someone asks why the boxes
+         are laid out like this, the answer is now "because that is the model's
+         shape", with nothing to explain away. */
+      const ROWS = 3;
       const TOP_STRIP = 32;      // the note()
       const BOT_STRIP = 34;      // the caption()
       const availH = Math.max(60, h - TOP_STRIP - BOT_STRIP);
@@ -114,8 +129,18 @@ export function create() {
       const L = Math.max(wEnc / 2 + 8, w * 0.25);
       const R = Math.min(w - wDec / 2 - 8, w * 0.75);
       const M = w * 0.5;
+      /* The bottom row holds BOTH 4² boxes side by side, the pair centred on
+         the middle of the pane. Centring the pair rather than the bottleneck
+         keeps the encoder's diagonal stepping inward (down and toward the
+         middle), which is the shape being taught. */
+      const gapB = 12;
+      const w4 = BW('enc4');
+      const pairL = M - (w4 + gapB + wMid) / 2;
+      const e4x = pairL + w4 / 2;
+      const midx = pairL + w4 + gapB + wMid / 2;
       const xy = (b) => ({
-        x: b.side === 'enc' ? L : b.side === 'dec' ? R : M,
+        x: b.key === 'enc4' ? e4x : b.key === 'mid' ? midx
+          : b.side === 'enc' ? L : R,
         y: rowY(b.row),
       });
 
@@ -127,10 +152,11 @@ export function create() {
         g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
         g.setLineDash([]);
       };
-      for (let n = 0; n < 2; n++) line(L, rowY(n) + bh / 2, L, rowY(n + 1) - bh / 2);
-      line(L, rowY(2) + bh / 2, M - wMid / 2, rowY(3));
-      line(M + wMid / 2, rowY(3), R, rowY(1) + bh / 2);
-      line(R, rowY(1) - bh / 2, R, rowY(0) + bh / 2);
+      line(L, rowY(0) + bh / 2, L, rowY(1) - bh / 2);          // 16 -> 8
+      line(L, rowY(1) + bh / 2, e4x, rowY(2) - bh / 2);        // 8 -> 4, stepping in
+      line(e4x + w4 / 2, rowY(2), midx - wMid / 2, rowY(2));   // 4 -> the bottleneck
+      line(midx + wMid / 2, rowY(2), R, rowY(1) + bh / 2);     // climbing back out
+      line(R, rowY(1) - bh / 2, R, rowY(0) + bh / 2);          // 8 -> 16
       // Skips start and end at the EDGE of the specific boxes they join, which
       // is why these read per-block rather than from one shared width.
       line(L + BW('enc16') / 2, rowY(0), R - BW('dec16') / 2, rowY(0), true);
@@ -181,19 +207,22 @@ export function create() {
         g.fillText(b.label, x - bw / 2 + (a ? bh + 2 : 10), y);
       }
 
-      // Text conditioning enters at the bottleneck. Drawn ON the mid row
-      // rather than near the bottom edge: in a tiled pane that strip belongs
-      // to the pane's own label and to the caption.
-      const ty = rowY(3);
-      g.textAlign = 'right';
-      g.textBaseline = 'middle';
+      /* Text conditioning enters at the bottleneck, FROM BELOW. It used to
+         come in from the left, but the left of the bottleneck is now the 4²
+         encoder box. Below is free — the caption strip is right-aligned and the
+         bottleneck is centred, so the label cannot collide with it — and an
+         arrow rising into the box reads as "injected here", which is what
+         happens. */
+      const py0 = rowY(2) + bh / 2;
       g.fillStyle = alpha(theme.accent2, .85);
       g.font = '9.5px ui-monospace, monospace';
-      g.fillText('prompt →', M - wMid / 2 - 8, ty);
-      g.strokeStyle = alpha(theme.accent2, .32);
-      g.setLineDash([3, 3]);
-      g.beginPath(); g.moveTo(M - wMid / 2 - 6, ty); g.lineTo(M - wMid / 2, ty); g.stroke();
-      g.setLineDash([]);
+      g.textAlign = 'center'; g.textBaseline = 'top';
+      g.fillText('prompt', midx, py0 + 15);
+      g.strokeStyle = alpha(theme.accent2, .55); g.lineWidth = 1;
+      g.beginPath(); g.moveTo(midx, py0 + 13); g.lineTo(midx, py0 + 4); g.stroke();
+      g.fillStyle = alpha(theme.accent2, .85);
+      g.beginPath(); g.moveTo(midx, py0 + 1); g.lineTo(midx - 3, py0 + 6);
+      g.lineTo(midx + 3, py0 + 6); g.closePath(); g.fill();
 
       /* WHAT GOES IN AND WHAT COMES OUT, WIRED INTO THE GRAPH.
          These first sat at the pane's edges, outside the pan/zoom transform, on
@@ -231,26 +260,22 @@ export function create() {
         arrow(R + BW('dec16') / 2 + 2, outX - ep / 2 - 3, rowY(0));
       }
 
-      /* THE PULSE — see the note at the top of create(). */
+      /* THE PULSE — see the note at the top of create(). Keyed on the step
+         being SHOWN, so a fresh pass and a scrub to an old one both fire: both
+         put a real pass's numbers on screen. */
       const reduce = window.matchMedia
         && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      /* Keyed on the NUMBER OF SNAPSHOTS, not on the index being displayed.
-         Keyed on the index it also fired while scrubbing, which is a lie: no
-         forward pass happens when you drag the slider over steps that already
-         ran. Snapshot count only goes up when the worker has actually completed
-         a pass. */
-      if (snaps.length !== lastCount) {
-        // Not on the first fill after a load, or replaying a saved run would
-        // announce 30 passes that are not happening now.
-        if (lastCount >= 0 && snaps.length === lastCount + 1) pulseAt = performance.now();
-        lastCount = snaps.length;
+      const shownIdx = snap ? snap.index : -1;
+      if (shownIdx !== lastShown) {
+        if (shownIdx >= 0) pulseAt = performance.now();
+        lastShown = shownIdx;
       }
       const age = (performance.now() - pulseAt) / PULSE_MS;
       if (!reduce && age >= 0 && age <= 1) {
         // The real order data reaches the blocks, as a polyline.
         const path = [
-          [L, rowY(0)], [L, rowY(1)], [L, rowY(2)],
-          [M, rowY(3)], [R, rowY(1)], [R, rowY(0)],
+          [L, rowY(0)], [L, rowY(1)], [e4x, rowY(2)],
+          [midx, rowY(2)], [R, rowY(1)], [R, rowY(0)],
         ];
         let total = 0;
         const seg = [];
@@ -285,7 +310,7 @@ export function create() {
       note(canvas, act ? 'Tiles are the real numbers, live.'
         : 'Turn on per-layer activations to see the tiles.');
       caption(g, w, h, snap ? `step ${snap.index + 1} / ${snap.total}` : 'ready',
-        'dashed = skip connections');
+        'dashed = detail shortcuts');
     },
   };
 }

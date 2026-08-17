@@ -672,6 +672,10 @@ button, input, select { font: inherit; color: inherit; }
   margin-left: auto; text-align: right; min-width: 0;
   font-style: normal; text-transform: none; letter-spacing: 0;
   font-size: var(--fs-small); font-weight: 400; color: var(--ink-3);
+  /* One line, clipped — never wrapped. The value here is a caption that
+     changes with every picked picture, and a long one wrapping to two lines
+     grows the heading and shifts the whole panel below it. */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* ---- act 1: one training step ------------------------------------------- */
@@ -789,6 +793,20 @@ button, input, select { font: inherit; color: inherit; }
   margin: 0; padding-top: 14px;
   border-top: 1px solid var(--line-soft);
   font-size: var(--fs-body); line-height: 1.6; color: var(--ink-2);
+  /* RESERVED, because this text changes with the noise slider and the four
+     strings it cycles through wrap to different line counts. Without the
+     reservation, dragging the slider made everything below this panel — the
+     whole rest of the page — jump up and down by a text line. Fifth instance
+     of the same lesson: text that changes needs its height reserved. The value
+     is measured against the LONGEST of the four strings at the narrowest panel
+     width the grid produces, then verified by sweeping all of them.
+     `+ 14px`: the global border-box reset makes min-height swallow the
+     padding-top, so without it the floor is one line short of the text it is
+     reserving for — measured, a 60px floor under 75px strings. The extra 2px
+     covers sub-pixel line rounding: the em calc lands on 74 while three real
+     rendered lines round to 75, and a floor one pixel under the text is still
+     a one-pixel jump on every slider move. */
+  min-height: calc(1.6em * 3 + 16px);
 }
 .t2d-verdict b { font-weight: var(--w-strong); color: var(--accent); }
 
@@ -1574,7 +1592,9 @@ button, input, select { font: inherit; color: inherit; }
 .ho-scale, .ho-verdict, .ho-caveat {
   margin: 12px 0 0; font-size: var(--fs-small); line-height: 1.6; color: var(--ink-3);
 }
-.ho-verdict { color: var(--ink-2); }
+/* Reserved: this fills in only after holdout.json arrives, and an unreserved
+   paragraph appearing pushes the caveat below it down mid-read. */
+.ho-verdict { color: var(--ink-2); min-height: calc(1.6em * 3); }
 .ho-caveat {
   margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line-soft);
 }

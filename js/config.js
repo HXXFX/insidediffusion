@@ -268,10 +268,10 @@ export const VIEWS = [
         ['accent-2', 'The amber dot', 'where your picture sits, with its current guess above it'],
         ['axis', 'σ (sigma)', 'how much noise is left, printed bottom right'],
       ],
-      watch: 'At the start there is one wide, soft hill — almost anything is possible. As the noise drains, separate peaks appear, each with its own kind of monster on top, and your dot settles onto one. That is the picture becoming specific.',
+      watch: 'At the start there is one wide, soft hill — almost anything is possible. As the noise drains, separate peaks appear, each with its own kind of monster on top, and your dot settles onto one. The tallest hill is only the most COMMON kind of monster, not the best — your dot needs to land on a hill, not on the tallest one.',
       // Stated on the view itself as well. Sitting in a tile beside the funnel
       // this could otherwise be read as depicting your image, which it cannot.
-      caveat: 'This is a flat shadow of a 768-dimensional space, so it shows roughly a quarter of the real picture. It is honest about the data, but it is not your image.',
+      caveat: 'A picture here is 768 numbers — 16 × 16 pixels × 3 colours. This map keeps only the two directions that separate the training pictures most, about a quarter of the full story, so it is honest about the data but it is not your image.',
     },
   },
   {
@@ -296,15 +296,15 @@ export const VIEWS = [
     id: 'network', label: 'Network', letter: 'D', default: true,
     short: 'The model your picture passes through.',
     help: {
-      what: 'The neural network your picture passes through, once per step. It shrinks the image down, thinks, then builds it back up.',
+      what: 'The neural network your picture passes through, once per step. It is drawn as a U because that is the shape of the model — each row down halves the picture, the bottom row is where it thinks, and each row up rebuilds it.',
       key: [
         ['box', 'Each box', 'one layer. The label is its size and how many channels it holds'],
         ['tile', 'The small grey tiles', 'the ACTUAL numbers inside that layer right now, not an illustration'],
         ['pic', 'Goes in, comes out', 'the picture handed to the network, and the one it hands back'],
         ['dash', 'Dashed lines', 'shortcuts that carry fine detail past the middle so it is not lost'],
-        ['accent-2', 'The amber arrow and the spark', 'where your prompt enters; the spark is one trip through the network, once per step'],
+        ['accent-2', 'The amber arrow and the spark', 'where your prompt enters; the spark retraces the trip that made the step on screen'],
       ],
-      watch: 'The image goes 16 → 8 → 4 and back to 16. The narrow middle is where the model considers the whole picture at once; the shortcuts are what keep the edges sharp. When the spark stops running, the run has finished.',
+      watch: 'The image goes 16 → 8 → 4 and back to 16 — lower boxes hold smaller pictures. The narrow middle is where the model considers the whole picture at once; the shortcuts keep the edges sharp. Drag the noise slider and the spark replays the trip for each step.',
     },
   },
 ];

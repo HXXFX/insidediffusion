@@ -301,14 +301,22 @@ export function create(ctx) {
         g.font = '9.5px ui-monospace, monospace';
         g.textAlign = 'left'; g.textBaseline = 'middle';
         g.fillStyle = alpha(theme.accent2, .95);
-        g.fillText('your sample', p[0] + 9, p[1]);
+        // "your monster", the app's own word for it — "sample" is ours.
+        g.fillText('your monster', p[0] + 9, p[1]);
       }
 
-      const pct = Math.round((projector.explained[0] + projector.explained[1]) * 100);
-      note(canvas, `The training data, ${pct}% of it — not your picture.`);
+      /* "The training data, 21% of it" was accurate and unreadable — the
+         percentage is explained variance, which nobody should need to know to
+         read a hill. What a reader actually needs: taller = more pictures of
+         that kind, and this maps the DATA, not their monster. That second half
+         directly answers the natural misreading of this view — "why isn't my
+         result on the highest mountain?" — the tallest hill is only the most
+         common kind of monster, and yours only needs to land on a hill. */
+      // One line, ~58 chars max — see the note budget comment in funnel.js.
+      note(canvas, 'Taller = more of that kind — the data, not yours.');
       caption(g, w, h, `noise σ = ${Math.sqrt(1 - ab).toFixed(3)}`,
         floored ? 'smoothed — the real peaks are sharper'
-          : 'surface = probability of the training data at this noise level');
+          : 'height = how common right now');
     },
   };
 }

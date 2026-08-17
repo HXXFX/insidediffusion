@@ -248,9 +248,13 @@ export class TrainingStep {
       return `<b>${pct}% noise.</b> Most of the picture is gone. What comes back is
         coming from the prompt, not from what is left on screen.`;
     }
-    return `<b>${pct}% noise — the easiest case.</b> What it sees IS nearly the noise,
-      so answering is close to repeating its input. Best loss, useless answer —
-      watch the implied picture, not the number.`;
+    // Trimmed to the same 3-line budget as its siblings — this string was one
+    // line longer than the other three, and the page stepped down every time
+    // the slider crossed t=700. Same lesson as the reserved min-height on the
+    // element: the LONGEST string sets the layout, so it has to share the
+    // budget, not just the message.
+    return `<b>${pct}% noise.</b> The easiest case: its input is nearly the answer,
+      so a superb loss means nothing. Watch the picture, not the number.`;
   }
 
   /**
