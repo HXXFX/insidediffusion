@@ -144,6 +144,33 @@ export function create() {
         y: rowY(b.row),
       });
 
+      /* THE PATH IS DECLARED ONCE AND THE LINES ARE DRAWN FROM IT.
+         The connectors used to be five hand-written `line(...)` calls between
+         box EDGES, while the spark travelled a separate array of box CENTRES.
+         Two copies of the same geometry, and they disagreed wherever the boxes
+         differ in width: the bottleneck is 146px wide, so its centre sits 73px
+         from its edge, and the spark left the line by a measured 37.8px on the
+         way out of it. No amount of care keeps two lists like that in step —
+         the second one is only ever updated when someone remembers.
+         So: the route is a list of blocks. `centres` is what the spark walks,
+         and each drawn segment is that same route trimmed back to the two
+         boxes it joins. The spark can now only leave a line where there is no
+         line to be on, which is inside a box, which is where it should be. */
+      const ROUTE = ['enc16', 'enc8', 'enc4', 'mid', 'dec8', 'dec16'];
+      const centres = ROUTE.map((k) => {
+        const b = BLOCKS.find((x) => x.key === k);
+        const { x, y } = xy(b);
+        return { x, y, hw: BW(k) / 2, hh: bh / 2 };
+      });
+      /* How far from a box's centre its edge is, along a given direction.
+         For an axis-aligned box the boundary is whichever of the two limits is
+         reached first, so this is a min of the two crossing distances — it
+         handles the vertical, horizontal and diagonal connectors with one
+         expression instead of three special cases. */
+      const edgeAt = (n, ux, uy) => Math.min(
+        ux ? n.hw / Math.abs(ux) : Infinity,
+        uy ? n.hh / Math.abs(uy) : Infinity);
+
       // connections first, so blocks sit on top of them
       g.strokeStyle = alpha(theme.ink, .16);
       g.lineWidth = 1;
@@ -152,13 +179,18 @@ export function create() {
         g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
         g.setLineDash([]);
       };
-      line(L, rowY(0) + bh / 2, L, rowY(1) - bh / 2);          // 16 -> 8
-      line(L, rowY(1) + bh / 2, e4x, rowY(2) - bh / 2);        // 8 -> 4, stepping in
-      line(e4x + w4 / 2, rowY(2), midx - wMid / 2, rowY(2));   // 4 -> the bottleneck
-      line(midx + wMid / 2, rowY(2), R, rowY(1) + bh / 2);     // climbing back out
-      line(R, rowY(1) - bh / 2, R, rowY(0) + bh / 2);          // 8 -> 16
-      // Skips start and end at the EDGE of the specific boxes they join, which
-      // is why these read per-block rather than from one shared width.
+      for (let n = 0; n < centres.length - 1; n++) {
+        const a = centres[n], b = centres[n + 1];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len, uy = dy / len;
+        const t0 = edgeAt(a, ux, uy), t1 = edgeAt(b, ux, uy);
+        // Nothing to draw when the boxes are closer than their own edges.
+        if (t0 + t1 >= len) continue;
+        line(a.x + ux * t0, a.y + uy * t0, b.x - ux * t1, b.y - uy * t1);
+      }
+      // The skips are their own edges, and are not part of the route the spark
+      // travels: data crosses them, but not in sequence.
       line(L + BW('enc16') / 2, rowY(0), R - BW('dec16') / 2, rowY(0), true);
       line(L + BW('enc8') / 2, rowY(1), R - BW('dec8') / 2, rowY(1), true);
 
@@ -273,10 +305,8 @@ export function create() {
       const age = (performance.now() - pulseAt) / PULSE_MS;
       if (!reduce && age >= 0 && age <= 1) {
         // The real order data reaches the blocks, as a polyline.
-        const path = [
-          [L, rowY(0)], [L, rowY(1)], [e4x, rowY(2)],
-          [midx, rowY(2)], [R, rowY(1)], [R, rowY(0)],
-        ];
+        // The same centres the connectors were trimmed from — see ROUTE above.
+        const path = centres.map((n) => [n.x, n.y]);
         let total = 0;
         const seg = [];
         for (let n = 1; n < path.length; n++) {
