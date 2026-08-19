@@ -40,7 +40,14 @@ const state = {
   snaps: [],
   head: 0,
   playing: false,
-  following: true,
+  /* IS THE WORKER STILL PRODUCING? Distinct from `playing`, which is whether
+     the TIMELINE is advancing, and the two now genuinely differ: the worker
+     runs flat out while the display walks the steps at the playback speed, so
+     generation routinely finishes while playback is still mid-run.
+     This replaced a `following` flag that meant "pin the display to the newest
+     snapshot". That flag made Playback speed a no-op during a live run — see
+     the note on the render loop. */
+  generating: false,
   mode: 'make',
   active: new Set(VIEWS.filter((v) => v.default).map((v) => v.id)),
   ready: false,
@@ -211,8 +218,22 @@ function onWorkerMessage(e) {
   } else if (m.type === 'started') {
     state.snaps = [];
     state.head = 0;
-    state.following = true;
+    state.generating = true;
     state.playing = true;
+    /* THE TRACK IS THE WHOLE RUN, sized once from the step count the worker is
+       about to produce — not from how many steps have arrived so far.
+       Sized from the arrivals it GREW during the run, and the thumb sits at
+       value/max, so both ends of that fraction moved and the thumb visibly
+       rocked backwards and forwards: measured over one run, 26 backward
+       movements, swinging 50% -> 33% -> 67% -> 50% -> 40% -> 60%. It was
+       invisible while the playhead was pinned to the newest step, because then
+       value === max and the fraction was always 1 — the thumb just sat at the
+       far right, which was the original complaint. One cause, both symptoms.
+       Set before any snapshot exists, so there is also no clamp: the old code
+       let a finished run's value of 29 survive into the next run until the
+       first arrival dropped max to 1 and yanked it back. */
+    $('#scrub').max = String(Math.max(1, m.total - 1));
+    $('#scrub').value = '0';
     attention.setWords(m.tokenWords);
     reportPrompt(m);
     setTransport(true);
@@ -229,16 +250,34 @@ function onWorkerMessage(e) {
     // loop, so opening the tab mid-run does not stall either one.
     if (stepDemo) stepDemo.show(m);
   } else if (m.type === 'snapshot') {
+    /* THE ARRIVAL OF A STEP NO LONGER MOVES THE PLAYHEAD.
+       It used to: `if (state.following) state.head = state.snaps.length - 1`,
+       which pinned the display to the newest step the worker had produced. The
+       render loop below already advances the head at the chosen playback
+       speed, so pinning it here overrode that on every message and made the
+       Playback speed control a silent no-op for the whole run. Measured at the
+       slowest setting, 0.25 — which should walk 30 steps in about 30 seconds —
+       the run finished in 4.5 s with the slider glued to its maximum.
+       Steps are collected here; the render loop decides when they are shown. */
     state.snaps.push(m);
-    if (state.following) state.head = state.snaps.length - 1;
-    $('#scrub').max = String(Math.max(1, state.snaps.length - 1));
   } else if (m.type === 'done') {
-    state.playing = false;
+    /* THE WORKER IS DONE, THE ANIMATION MAY NOT BE. Setting `playing = false`
+       here froze the display wherever it had got to as soon as the last step
+       was computed — harmless while the head was pinned to the newest step,
+       fatal once playback is paced and legitimately behind. The render loop
+       stops playback when the DISPLAY reaches the last step. */
+    state.generating = false;
     state.stepMs = m.medianStepMs;
-    setTransport(false);
     $('#stepMs').textContent = `${Math.round(m.medianStepMs)} ms/step`;
     log.end('run', `finished — ${Math.round(m.medianStepMs)} ms per step`);
   } else if (m.type === 'error') {
+    /* A failed run produces no `done`, so the flags have to be cleared here or
+       playback sits at the last step it managed with the transport still
+       reading "Pause", waiting for a message that is never coming. The overlay
+       covers the screen either way; this keeps the state underneath honest. */
+    state.generating = false;
+    state.playing = false;
+    setTransport(false);
     log.error(m.message);
     fail(m.message);
   }
@@ -794,7 +833,9 @@ async function showDemo(manifest) {
     if (state.runRequested || state.snaps.length) return;
     state.snaps = snaps;
     state.head = snaps.length - 1;
-    state.following = false;
+    // Not generating and not playing: the saved run is shown at its finished
+    // frame, and the render loop leaves it alone until Run starts a real one.
+    state.generating = false;
     attention.setWords(manifest.demo.words || []);
     $('#scrub').max = String(snaps.length - 1);
     $('#scrub').value = String(state.head);
@@ -847,7 +888,6 @@ function wireTransport() {
   syncLive();
   $('#scrub').oninput = (e) => {
     state.head = parseInt(e.target.value, 10);
-    state.following = state.head >= state.snaps.length - 1;
     state.playing = false;
     setTransport(false);
   };
@@ -1106,12 +1146,34 @@ function render(now) {
 
   if (state.mode === 'train') return;   // static; the scrubber drives it
 
+  /* THE PLAYHEAD MOVES AT THE PLAYBACK SPEED, AND ONLY HERE.
+     This pacing existed before and never ran during a live run: every arriving
+     snapshot pinned the head to the newest step, so the timeline advanced at
+     whatever rate the worker happened to produce (~7 steps/s) and the Playback
+     speed control did nothing at all. Measured at its slowest setting, 0.25,
+     which should walk 30 steps in about 30 seconds: the run finished in 4.5 s
+     with the slider glued to its maximum for all 45 samples.
+     Now the worker fills `snaps` as fast as it can and the display walks them
+     at 4 x speed steps per second, so the run is watchable and the control is
+     real. At speed 8 the pace outruns the worker and the behaviour is what it
+     always was — worker-limited. */
   if (state.playing && state.snaps.length) {
     acc += dt * 4 * parseFloat(controls.get('speed'));
     while (acc >= 1) {
       acc -= 1;
-      if (state.head < state.snaps.length - 1) state.head++;
-      else state.following = true;
+      if (state.head < state.snaps.length - 1) { state.head++; continue; }
+      // Caught up with the worker. Drop the banked credit rather than keeping
+      // it: held, it would buy a burst of instant steps the moment the next
+      // snapshots land, which is the stutter this pacing exists to remove.
+      acc = 0;
+      break;
+    }
+    /* PLAYBACK ENDS WHEN THE DISPLAY REACHES THE LAST STEP, not when the
+       worker stops. Those were the same event while the head was pinned; they
+       are now routinely seconds apart. */
+    if (!state.generating && state.head >= state.snaps.length - 1) {
+      state.playing = false;
+      setTransport(false);
     }
     $('#scrub').value = String(state.head);
   }
