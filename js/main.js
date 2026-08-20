@@ -20,6 +20,7 @@ import { loadProjection, loadCloudPictures } from './views/projection.js';
 import { loadIndex } from './nn/weights.js';
 import { Grammar } from './prompt.js';
 import { loadDemo } from './demo.js';
+import { loadVocabulary, voteColour, subjectPixels } from './match.js';
 import { TrainingReplay } from './training/replay.js';
 import { TrainingStep } from './training/step.js';
 import { HoldoutPanel } from './training/holdout.js';
@@ -71,6 +72,13 @@ let controls, strip, attention, schedule, worker, projector, wordlist, builder;
 let holdoutPanel;
 /** Filled in after boot; see the loadCloudPictures call below. */
 const cloudPics = { data: null };
+/* WHAT THE CURRENT RUN STARTED FROM — a holder, like cloudPics, so the views
+   can read it each frame without being rebuilt. `source` is the uploaded
+   picture the run began at, or null for text-to-image and for the saved demo.
+   Set ONLY in run(), so it always describes the snapshots actually on screen:
+   clearing the image slot does not falsify the label on a run that genuinely
+   did start from a picture. */
+const runMeta = { source: null };
 let replay = null, logview = null, splitter = null, stepDemo = null;
 
 // --------------------------------------------------------------- boot
@@ -132,7 +140,7 @@ async function boot() {
      pictures are an enrichment of the views, never a requirement of them. */
   for (const v of VIEWS) {
     const mod = MODULES[v.id];
-    panes.get(v.id).renderer = mod.create({ projector, imgSize: 16, cloudPics });
+    panes.get(v.id).renderer = mod.create({ projector, imgSize: 16, cloudPics, runMeta });
   }
   loadCloudPictures('./weights/').then((p) => {
     cloudPics.data = p;
@@ -962,6 +970,7 @@ function markStale(v) {
 function run() {
   if (!state.ready) return;
   state.runRequested = true;
+  runMeta.source = state.initial;
   markStale(false);
   // Capturing internals costs memory on every step, so only do it when the
   // panel that consumes them is actually on. Look the checkbox up by the
@@ -997,11 +1006,126 @@ function run() {
  * dropped anywhere else would otherwise be opened BY THE BROWSER, navigating
  * away from the app and losing the run.
  */
+/* ---------------------------------------- what the model thinks your picture is
+ *
+ * Lazy, once, and never awaited by boot: 49 kB gzipped that only matters after
+ * a picture is dropped in. Held here rather than in the module so a failed
+ * fetch can be retried by clicking again.
+ */
+let vocab = null, vocabPending = null;
+
+function resetMatch() {
+  const b = $('#matchImg');
+  if (!b) return;
+  b.classList.remove('matched');
+  b.classList.add('empty');
+  $('#matchLabel').textContent = 'Match words';
+}
+
+/**
+ * Set the sentence to the nearest monster the model can actually draw.
+ *
+ * WHY THIS IS NOT A CONVENIENCE. An image-to-image run starts from the picture
+ * and is steered by the WORDS for its entire length. A picture and a prompt
+ * that disagree therefore pull against each other the whole way — measured on
+ * the reference implementation, a mismatched prompt costs 0.362 of identity at
+ * Change amount 0.5 against 0.254 for a matching one, and by strength 0.35 the
+ * words have already recoloured a blue turtle green and grown it bat wings.
+ *
+ * TWO SEPARATE QUESTIONS, answered separately. The colour is named from the
+ * full-resolution picture by hue; the shape is then searched with that colour
+ * held fixed. Scoring both at once in RGB was a real bug — it reported a blue
+ * creature as "grey", because grey is the achromatic centre and sits close to
+ * every washed-out colour, and the 16x16 tile it judged had already had its hue
+ * averaged away against the background.
+ *
+ * WHAT STAYS HONEST is the reach. The palette owns ten colours and no cyan, so
+ * a teal creature is 62 degrees of hue from green and 82 from blue, and the log
+ * says how far the nearest word had to stretch instead of implying it landed.
+ */
+async function matchImage() {
+  if (!state.initial) return;
+  const btn = $('#matchImg'), label = $('#matchLabel');
+  if (!vocab) {
+    label.textContent = 'Reading…';
+    try {
+      vocabPending = vocabPending || loadVocabulary('./weights/');
+      vocab = await vocabPending;
+    } catch (e) {
+      vocabPending = null;
+      label.textContent = 'Match words';
+      log.warn('could not read the vocabulary', String(e && e.message));
+      return;
+    }
+    if (!vocab) {
+      vocabPending = null;
+      label.textContent = 'Match words';
+      log.warn('could not read the vocabulary');
+      return;
+    }
+  }
+
+  const t0 = performance.now();
+  const vote = state.initialPixels
+    ? voteColour(state.initialPixels, vocab.luts) : null;
+  const m = vocab.match(state.initial, vote ? vote.index : -1);
+  const ms = Math.round(performance.now() - t0);
+
+  // The winner, drawn beside the picture it was matched to, because the words
+  // alone do not tell you whether the model understood the shape or gave up.
+  const c = $('#matchPreview').getContext('2d');
+  const img = c.createImageData(16, 16);
+  for (let i = 0; i < 256; i++) {
+    const e = m.lut[m.map.charCodeAt(i) - 48];
+    for (let k = 0; k < 3; k++) img.data[i * 4 + k] = e[k];
+    img.data[i * 4 + 3] = 255;
+  }
+  c.putImageData(img, 0, 0);
+  btn.classList.remove('empty');
+  btn.classList.add('matched');
+  label.textContent = 'Matched';
+  btn.title = `Nearest of 64,000: ${m.sentence}`;
+
+  /* THE PROMPT IS A SENTENCE, not a slot object, and it has to be built by
+     `grammar.describe` rather than assembled here. Passing the slots as an
+     object was silently discarded: `setPrompt` hands its argument to
+     `grammar.parse`, which stringified the object to nothing it recognised and
+     fell through to every default, so the dropdowns read "green blob two none
+     none none" while the match had actually found a grey drop.
+     `describe` is the same function the builder uses, so what goes in is
+     exactly what the parser round-trips back out — and writing the sentence by
+     hand here would break on the optional slots, where a literal "none" is a
+     word three different slots can claim. */
+  const slots = {
+    colour: m.colour, body: m.words[0], eyes: m.words[1],
+    horns: m.words[2], wings: m.words[3], legs: m.words[4],
+  };
+  setPrompt(builder ? builder.grammar.describe(slots) : m.sentence);
+  /* SAY WHEN THE COLOUR WAS A STRETCH. The palette has ten colours, so a hue it
+     does not own gets the nearest one it does — and a reader told "blue" with
+     no qualifier will think the model saw blue. Past about 40 degrees the name
+     is a reach, and naming the next nearest shows how thinly it won.
+     Use `nextHue`, NOT `runnerUp`: the runner-up is whatever colour holds the
+     second most pixels, which on a creature with contrasting markings is a
+     different part of the animal, not a neighbouring hue. */
+  const far = vote && vote.hueGap != null && vote.hueGap > 40;
+  const note = far
+    ? ` · no colour it owns is near that hue — ${m.colour} is the closest at `
+      + `${vote.hueGap.toFixed(0)}°`
+      + (vote.nextHue != null
+          ? `, then ${vocab.colours[vote.nextHue]} at ${vote.nextGap.toFixed(0)}°` : '')
+    : '';
+  log.good(`nearest monster: ${m.sentence}`,
+    `searched ${vocab.n} shapes in ${ms} ms · `
+    + `still ${m.error.toFixed(0)} of 255 away — the model has no closer word${note}`);
+}
+
 function wireDropzone() {
   const dz = $('#dropzone');
   const input = $('#fileInput');
   $('#openBtn').onclick = () => input.click();
   $('#clearImg').onclick = (e) => { e.stopPropagation(); clearImage(); };
+  $('#matchImg').onclick = (e) => { e.stopPropagation(); matchImage(); };
   input.onchange = () => input.files[0] && loadImage(input.files[0]);
 
   for (const ev of ['dragenter', 'dragover']) {
@@ -1027,9 +1151,12 @@ function wireDropzone() {
 function clearImage() {
   if (state.initial) log.info('picture removed — back to generating from words');
   state.initial = null;
+  state.initialPixels = null;
   $('#preview').hidden = true;
   $('#dropzone').classList.remove('has');
   $('#clearImg').hidden = true;
+  $('#matchImg').hidden = true;
+  resetMatch();
   $('#dropHint').textContent = '+ Add image';
   $('#fileInput').value = '';
   controls.setMode(state.mode, { image: false });
@@ -1073,6 +1200,12 @@ function toTile(img, bg) {
   g.fillRect(0, 0, size, size);
   g.drawImage(img, sx, sy, s, s, 0, 0, size, size);
 
+  /* A MID-RESOLUTION COPY IS KEPT FOR NAMING THE COLOUR, because by 16x16 the
+     hue is gone. At that size almost every pixel of a small subject straddles
+     its outline and is therefore the subject averaged with the backdrop — which
+     is precisely the wash-toward-the-background that turns a blue creature
+     grey. At 128 the interior is many pixels deep and only the rim is mixed. */
+  let work = null;
   while (size > 32) {
     const half = Math.max(16, Math.round(size / 2));
     const next = document.createElement('canvas');
@@ -1083,7 +1216,9 @@ function toTile(img, bg) {
     ng.drawImage(cur, 0, 0, half, half);
     cur = next;
     size = half;
+    if (!work && size <= 128) work = { d: ng.getImageData(0, 0, size, size).data, n: size };
   }
+  if (!work) work = { d: g.getImageData(0, 0, size, size).data, n: size };
 
   const tile = document.createElement('canvas');
   tile.width = tile.height = 16;
@@ -1091,7 +1226,7 @@ function toTile(img, bg) {
   tg.imageSmoothingEnabled = true;
   tg.imageSmoothingQuality = 'high';
   tg.drawImage(cur, 0, 0, 16, 16);
-  return tile;
+  return { tile, work };
 }
 
 function loadImage(file) {
@@ -1099,7 +1234,8 @@ function loadImage(file) {
   const img = new Image();
   img.onload = () => {
     const bg = state.manifest?.background || [248, 249, 252];
-    const c = toTile(img, bg);
+    const { tile: c, work } = toTile(img, bg);
+    state.initialPixels = subjectPixels(work.d, work.n, work.n, bg);
     const d = c.getContext('2d').getImageData(0, 0, 16, 16).data;
     const out = new Float32Array(3 * 256);
     for (let i = 0; i < 256; i++) {
@@ -1115,6 +1251,9 @@ function loadImage(file) {
     $('#preview').hidden = false;
     $('#dropzone').classList.add('has');
     $('#clearImg').hidden = false;
+    // A new picture invalidates the previous reading of the old one.
+    $('#matchImg').hidden = false;
+    resetMatch();
     // The thumbnail sits BESIDE the text now rather than covering it, so the
     // slot can say whose picture it is holding. Long names are ellipsised in
     // CSS; the full one stays on the title.

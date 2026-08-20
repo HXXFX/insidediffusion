@@ -40,7 +40,7 @@ export const id = 'landscape';
 export const label = 'Landscape';
 
 export function create(ctx) {
-  const { projector, cloudPics } = ctx;
+  const { projector, cloudPics, runMeta } = ctx;
   const cloudXY = new Float32Array(projector.cloudN * 2);
   const acc = new Float32Array(SPLAT * SPLAT);
   const tmp = new Float32Array(SPLAT * SPLAT);
@@ -198,6 +198,9 @@ export function create(ctx) {
       const sc = Math.min(w, h) * 0.60;
       const HEIGHT = 0.70;
       const p = [0, 0, 0];
+      // Second scratch vector: the origin marker needs a point held while the
+      // current position is projected into the first one.
+      const q = [0, 0, 0];
       const at = (i2, j2, o) => {
         const X = (i2 / G) * 2 - 1, Z = (j2 / G) * 2 - 1;
         const d = dens[j2 * (G + 1) + i2] / peak;
@@ -256,6 +259,66 @@ export function create(ctx) {
           g.strokeStyle = alpha(theme.ink, .34); g.lineWidth = 1;
           g.strokeRect(p[0] - tp / 2 - 0.5, sy - tp / 2 - 0.5, tp + 1, tp + 1);
         }
+      }
+
+      /* WHERE YOUR PICTURE STARTED, when the run began from one.
+         This view owns the clearest statement image-to-image can make and was
+         not making it: the run begins at your picture, out on the flats, and is
+         dragged onto a hill. Without the origin marked the sample simply
+         appeared mid-map and the pull was invisible.
+
+         MEASURED, because the first version of this comment asserted the
+         stronger and wrong thing — that a photograph lands beyond the map
+         entirely. Both of the test photographs project to about (0.46, 0.48),
+         which is INSIDE the extent and inside the range real monsters occupy.
+         What is true is about density, not distance: the distance to the 20th
+         nearest training monster is 0.33 and 0.29 there, against a median of
+         0.087 for a real monster — three to four times sparser than anywhere
+         the data actually lives. Flat ground between the hills, not off the
+         edge of the world.
+         Drawn before the sample so the live marker stays on top, and only for
+         a real image-to-image run: text-to-image starts at noise, which is not
+         a place on this map worth pointing at. */
+      const src = runMeta && runMeta.source;
+      if (snap && src) {
+        projector.project(src, proj);
+        const sc3 = 1 / (projector.scale || 1);
+        const rawX = (proj[0] * sc3) / RANGE, rawZ = (proj[1] * sc3) / RANGE;
+        const oX = Math.max(-1, Math.min(1, rawX));
+        const oZ = Math.max(-1, Math.min(1, rawZ));
+        // Off the edge is possible but is NOT the common case — see above. Kept
+        // because when it does happen, pinning the marker to the border without
+        // saying so would place the picture somewhere it is not.
+        const beyond = Math.abs(rawX) > 1 || Math.abs(rawZ) > 1;
+        const gi2 = Math.round(((oX + 1) / 2) * G), gj2 = Math.round(((oZ + 1) / 2) * G);
+        const od = dens[gj2 * (G + 1) + gi2] / peak;
+        cam.project(oX * RANGE, od * HEIGHT - 0.34 + 0.05, oZ * RANGE, cx, cy, sc, q);
+
+        // the pull, origin to where it is now
+        projector.project(snap.x, proj);
+        const nX = Math.max(-1, Math.min(1, (proj[0] * sc3) / RANGE));
+        const nZ = Math.max(-1, Math.min(1, (proj[1] * sc3) / RANGE));
+        const nd = dens[Math.round(((nZ + 1) / 2) * G) * (G + 1)
+          + Math.round(((nX + 1) / 2) * G)] / peak;
+        cam.project(nX * RANGE, nd * HEIGHT - 0.34 + 0.05, nZ * RANGE, cx, cy, sc, p);
+        g.strokeStyle = alpha(theme.ink, .3); g.lineWidth = 1;
+        g.setLineDash([4, 3]);
+        g.beginPath(); g.moveTo(q[0], q[1]); g.lineTo(p[0], p[1]); g.stroke();
+        g.setLineDash([]);
+
+        const opx = Math.max(16, Math.min(24, Math.min(w, h) * 0.05));
+        sprite(g, src, 16, q[0], q[1] - opx * 0.75, opx);
+        g.strokeStyle = alpha(theme.ink, .45); g.lineWidth = 1;
+        g.strokeRect(q[0] - opx / 2 - 0.5, q[1] - opx * 0.75 - opx / 2 - 0.5,
+          opx + 1, opx + 1);
+        g.fillStyle = alpha(theme.ink, .5);
+        g.beginPath(); g.arc(q[0], q[1], 3, 0, 7); g.fill();
+        g.font = '9.5px ui-monospace, monospace';
+        g.textAlign = 'center'; g.textBaseline = 'top';
+        g.fillStyle = alpha(theme.ink3, .95);
+        g.fillText(beyond ? 'your picture (off the map)' : 'your picture',
+          q[0], q[1] + 5);
+        g.textAlign = 'left'; g.textBaseline = 'middle';
       }
 
       // where THIS sample currently sits on the surface

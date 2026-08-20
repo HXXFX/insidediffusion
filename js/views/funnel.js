@@ -28,7 +28,7 @@ export const id = 'funnel';
 export const label = 'Funnel';
 
 export function create(ctx) {
-  const { projector, cloudPics } = ctx;
+  const { projector, cloudPics, runMeta } = ctx;
   const k = projector.k;
   const proj = new Float32Array(k);
   const cloudXY = new Float32Array(projector.cloudN * 2);
@@ -169,7 +169,33 @@ export function create(ctx) {
         g.strokeStyle = alpha(theme.ink, .34); g.lineWidth = 1;
         g.beginPath(); g.arc(p[0], p[1], 7, 0, 7); g.stroke();
         g.fillStyle = alpha(theme.ink, .66);
-        g.fillText('pure noise', p[0] + 11, p[1]);
+        /* THE START IS ONLY "pure noise" WHEN IT IS. An image-to-image run
+           begins partway down the schedule — at the default Change amount the
+           first state is the user's picture with 65% noise on it — and this
+           label said "pure noise" there anyway, which is exactly the kind of
+           lie the views exist to not tell. It also answered the wrong question:
+           the user asking "what did my picture do?" could see no trace of it in
+           any view. Now the start of the trail says what it is, and SHOWS the
+           uploaded picture beside it, so an img2img run visibly begins AT your
+           picture, pushed partway up into noise, instead of at the top. */
+        const src = runMeta && runMeta.source;
+        const noise0 = snaps.length
+          ? Math.round(Math.sqrt(1 - snaps[0].alphaBar) * 100) : 100;
+        if (src && noise0 < 100) {
+          g.fillText(`your picture + ${noise0}% noise`, p[0] + 11, p[1]);
+          const spx = Math.max(18, Math.min(26, Math.min(w, h) * 0.055));
+          // Below-left of the start ring: the trail leaves downward and the
+          // label sits to the right, so that corner is the free one.
+          const sx = Math.max(spx / 2 + 4, p[0] - spx * 0.7 - 12);
+          const sy = Math.min(h - spx / 2 - 4, p[1] + spx * 0.7 + 10);
+          g.strokeStyle = alpha(theme.ink, .3); g.lineWidth = 1;
+          g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(sx, sy); g.stroke();
+          sprite(g, src, 16, sx, sy, spx);
+          g.strokeStyle = alpha(theme.ink, .4); g.lineWidth = 1;
+          g.strokeRect(sx - spx / 2 - 0.5, sy - spx / 2 - 0.5, spx + 1, spx + 1);
+        } else {
+          g.fillText('pure noise', p[0] + 11, p[1]);
+        }
 
         /* THE HEAD OF THE TRAIL IS THE PICTURE, not a dot.
            This view is about a state falling out of noise, and it was drawing

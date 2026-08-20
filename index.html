@@ -383,6 +383,18 @@
       </button>
       <button class="dock-clear" id="clearImg" hidden aria-label="Remove the image">×</button>
       <input type="file" id="fileInput" accept="image/*" hidden>
+      <!-- THE MISSING HALF OF IMAGE-TO-IMAGE. The run starts from your picture
+           but is steered by the words for its whole length, so a picture and a
+           prompt that disagree pull against each other the entire way. This
+           asks the model which of the 64,000 monsters it can draw is nearest
+           to what you dropped in, and sets the sentence to that one. Hidden
+           until there is a picture, because it has nothing to describe
+           otherwise. -->
+      <button class="dock-match" id="matchImg" hidden
+              title="Set the words to the nearest monster this model can draw">
+        <canvas id="matchPreview" width="16" height="16" aria-hidden="true"></canvas>
+        <span id="matchLabel">Match words</span>
+      </button>
     </div>
   </div>
 

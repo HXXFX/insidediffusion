@@ -29,8 +29,8 @@ Four views, any of which can be on screen at once:
 
 | view | what it shows |
 |---|---|
-| **Funnel** | your picture as a single dot, falling from pure noise onto the set of real images |
-| **Landscape** | a map of which pictures are likely — hills are likely, flats are not |
+| **Funnel** | the run as a single dot, falling onto the set of real images — from pure noise, or from your picture when you give it one |
+| **Landscape** | a map of which pictures are likely — hills are likely, flats are not — with your picture marked where it starts |
 | **Towers** | one tower per pixel, so you can watch noise drain out unevenly |
 | **Network** | the model itself, with the real numbers flowing through it |
 
@@ -40,10 +40,26 @@ And three panels underneath:
 - **Word attention** — which pixels are listening to which word of your prompt
 - **Noise recipe** — how much noise is added at each point in the run
 
+### Starting from your own picture
+
 A picture you drop in is reduced to 16 × 16, pushed part-way back toward noise,
 and rebuilt — turn the change amount down and you get your picture lightly
 repainted, turn it up and you get a monster that borrowed its shape and colour
-from it.
+from it. At the very top of that range your picture is gone entirely, and that
+is the honest answer rather than a bug: pushed all the way back to noise, there
+is nothing of the original left to rebuild from.
+
+The words keep steering the whole way, so a picture and a prompt that disagree
+spend the run pulling against each other. **Match words** settles that. It
+searches all 64,000 monsters this model can draw for the one nearest your
+picture, and sets the prompt to its words — so the sentence and the picture are
+asking for the same thing.
+
+It will also tell you when it had to reach. The model owns ten colours and none
+of them is cyan, so a teal creature comes back named green, along with a note
+saying how far that was and which colour came second. The interesting part of
+this feature is not that it finds a match; it is watching where a small
+vocabulary runs out.
 
 ## How it was made
 
